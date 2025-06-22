@@ -1,0 +1,450 @@
+@startuml tools-ecosystem-code
+!theme plain
+title etcd 工具生态系统 - 代码实现位置
+
+package "命令行工具 Command Line Tools" {
+  class etcdctl {
+    +endpoints: []string
+    +dialTimeout: time.Duration
+    +commandTimeout: time.Duration
+    +user: string
+    +password: string
+    +cacert: string
+    +cert: string
+    +key: string
+    +Put()
+    +Get()
+    +Del()
+    +Watch()
+    +Lease()
+    +Auth()
+    +Member()
+    +Snapshot()
+    +Txn()
+    --
+    📁 etcdctl/main.go:main()
+    📁 etcdctl/ctlv3/command/global.go:GlobalFlags
+    📁 etcdctl/ctlv3/command/put_command.go:NewPutCommand()
+    📁 etcdctl/ctlv3/command/get_command.go:NewGetCommand()
+    📁 etcdctl/ctlv3/command/del_command.go:NewDelCommand()
+    📁 etcdctl/ctlv3/command/watch_command.go:NewWatchCommand()
+    📁 etcdctl/ctlv3/command/lease_command.go:NewLeaseCommand()
+    📁 etcdctl/ctlv3/command/auth_command.go:NewAuthCommand()
+    📁 etcdctl/ctlv3/command/member_command.go:NewMemberCommand()
+    📁 etcdctl/ctlv3/command/snapshot_command.go:NewSnapshotCommand()
+    📁 etcdctl/ctlv3/command/txn_command.go:NewTxnCommand()
+  }
+  
+  class etcdutl {
+    +dataDir: string
+    +walDir: string
+    +snapshotFile: string
+    +SnapshotSave()
+    +SnapshotRestore()
+    +SnapshotStatus()
+    +Migrate()
+    +Defrag()
+    +Check()
+    +Compact()
+    --
+    📁 etcdutl/main.go:main()
+    📁 etcdutl/etcdutl/snapshot_command.go:NewSnapshotCommand()
+    📁 etcdutl/etcdutl/migrate_command.go:NewMigrateCommand()
+    📁 etcdutl/etcdutl/defrag_command.go:NewDefragCommand()
+    📁 etcdutl/etcdutl/backup_command.go:NewBackupCommand()
+  }
+  
+  class etcd {
+    +name: string
+    +dataDir: string
+    +walDir: string
+    +listenClientUrls: []url.URL
+    +listenPeerUrls: []url.URL
+    +initialCluster: string
+    +initialClusterState: string
+    +Start()
+    +Stop()
+    +Serve()
+    --
+    📁 server/etcdmain/main.go:main()
+    📁 server/etcdmain/etcd.go:startEtcdOrProxyV2()
+    📁 server/etcdmain/config.go:newConfig()
+    📁 server/embed/etcd.go:StartEtcd()
+  }
+}
+
+package "性能测试工具 Benchmark Tools" {
+  class benchmark {
+    +endpoints: []string
+    +clients: int
+    +conns: int
+    +keySize: int
+    +valSize: int
+    +total: int
+    +rate: int
+    +Put()
+    +Range()
+    +Mixed()
+    +Watch()
+    +Lease()
+    +STM()
+    --
+    📁 tools/benchmark/main.go:main()
+    📁 tools/benchmark/cmd/put.go:NewPutCommand()
+    📁 tools/benchmark/cmd/range.go:NewRangeCommand()
+    📁 tools/benchmark/cmd/mixed.go:NewMixedCommand()
+    📁 tools/benchmark/cmd/watch.go:NewWatchCommand()
+    📁 tools/benchmark/cmd/lease.go:NewLeaseCommand()
+    📁 tools/benchmark/cmd/stm.go:NewSTMCommand()
+  }
+  
+  class BenchmarkResult {
+    +Total: int
+    +Seconds: float64
+    +RPS: float64
+    +AvgLatency: time.Duration
+    +P50Latency: time.Duration
+    +P95Latency: time.Duration
+    +P99Latency: time.Duration
+    +P999Latency: time.Duration
+    --
+    📁 tools/benchmark/cmd/util.go:report
+    📁 tools/benchmark/cmd/util.go:(*report).Results()
+    📁 tools/benchmark/cmd/util.go:(*report).Stats()
+  }
+}
+
+package "数据导出工具 Data Export Tools" {
+  class etcd_dump_db {
+    +dbPath: string
+    +ListBucket()
+    +IterateBucket()
+    +DumpKeys()
+    +DumpValues()
+    --
+    📁 tools/etcd-dump-db/main.go:main()
+    📁 tools/etcd-dump-db/main.go:listBucket()
+    📁 tools/etcd-dump-db/main.go:iterateBucket()
+  }
+  
+  class etcd_dump_logs {
+    +walDir: string
+    +DumpWAL()
+    +DumpEntries()
+    +AnalyzeLog()
+    --
+    📁 tools/etcd-dump-logs/main.go:main()
+    📁 tools/etcd-dump-logs/main.go:dumpWAL()
+    📁 tools/etcd-dump-logs/main.go:dumpSnapshot()
+  }
+  
+  class etcd_dump_metrics {
+    +endpoints: []string
+    +outputFile: string
+    +DumpMetrics()
+    +ExportPrometheus()
+    --
+    📁 tools/etcd-dump-metrics/main.go:main()
+    📁 tools/etcd-dump-metrics/main.go:dumpMetrics()
+  }
+}
+
+package "本地测试工具 Local Testing Tools" {
+  class local_tester {
+    +agentEndpoints: []string
+    +stressKeyCount: int
+    +stressKeySize: int
+    +failureCases: []string
+    +RunTest()
+    +InjectFailure()
+    +CheckConsistency()
+    +GenerateReport()
+    --
+    📁 tools/local-tester/main.go:main()
+    📁 tools/local-tester/bridge/bridge.go:Bridge
+    📁 tools/local-tester/bridge/bridge.go:(*Bridge).Run()
+  }
+  
+  class Agent {
+    +endpoint: string
+    +etcdPath: string
+    +dataDir: string
+    +Start()
+    +Stop()
+    +Kill()
+    +Restart()
+    +Status()
+    --
+    📁 tools/local-tester/bridge/bridge.go:Agent
+    📁 tools/local-tester/bridge/bridge.go:(*Agent).Start()
+    📁 tools/local-tester/bridge/bridge.go:(*Agent).Stop()
+    📁 tools/local-tester/bridge/bridge.go:(*Agent).Restart()
+  }
+  
+  class FailureCase {
+    +name: string
+    +description: string
+    +Execute()
+    +Recover()
+    --
+    📁 tools/local-tester/bridge/bridge.go:FailureCase
+    📁 tools/local-tester/bridge/bridge.go:injectFailure()
+  }
+}
+
+package "开发工具 Development Tools" {
+  class proto_annotations {
+    +protoFiles: []string
+    +outputDir: string
+    +Generate()
+    +Validate()
+    --
+    📁 tools/proto-annotations/main.go:main()
+    📁 api/etcdserverpb/rpc.proto
+    📁 api/mvccpb/kv.proto
+    📁 api/authpb/auth.proto
+  }
+  
+  class mod_tools {
+    +goMod: string
+    +Update()
+    +Tidy()
+    +Vendor()
+    +Check()
+    --
+    📁 tools/mod/main.go:main()
+    📁 go.mod
+    📁 go.sum
+    📁 scripts/build.sh
+  }
+  
+  class testgrid_analysis {
+    +testResults: []TestResult
+    +Analyze()
+    +GenerateReport()
+    +FindFlaky()
+    --
+    📁 tools/testgrid-analysis/main.go:main()
+    📁 tools/testgrid-analysis/cmd/analyze.go
+  }
+}
+
+package "监控工具 Monitoring Tools" {
+  class prometheus_exporter {
+    +metricsPath: string
+    +listenAddress: string
+    +etcdEndpoints: []string
+    +CollectMetrics()
+    +ExportMetrics()
+    --
+    📁 server/etcdserver/api/v3rpc/metrics.go
+    📁 server/storage/mvcc/metrics.go
+    📁 server/lease/metrics.go
+    📁 raft/node.go:Status()
+    📁 github.com/prometheus/client_golang
+  }
+  
+  class grafana_dashboard {
+    +dashboardConfig: string
+    +panels: []Panel
+    +CreateDashboard()
+    +UpdatePanels()
+    --
+    📁 Documentation/op-guide/grafana.json
+    📁 contrib/grafana-dashboard.json
+  }
+  
+  class alertmanager_rules {
+    +rulesFile: string
+    +alertRules: []AlertRule
+    +LoadRules()
+    +ValidateRules()
+    --
+    📁 Documentation/op-guide/etcd3_alert.rules.yml
+  }
+}
+
+package "部署工具 Deployment Tools" {
+  class etcd_operator {
+    +namespace: string
+    +clusterName: string
+    +size: int
+    +version: string
+    +CreateCluster()
+    +UpdateCluster()
+    +DeleteCluster()
+    +BackupCluster()
+    +RestoreCluster()
+    --
+    📁 contrib/raftexample/
+    📁 hack/scripts-dev/docker-dns/
+    📁 hack/scripts-dev/docker-local/
+  }
+  
+  class helm_chart {
+    +chartName: string
+    +values: map[string]interface{}
+    +Install()
+    +Upgrade()
+    +Uninstall()
+    +Template()
+    --
+    📁 contrib/helm/etcd/
+    📁 contrib/helm/etcd/Chart.yaml
+    📁 contrib/helm/etcd/values.yaml
+  }
+  
+  class ansible_playbook {
+    +inventory: string
+    +playbook: string
+    +variables: map[string]string
+    +Deploy()
+    +Configure()
+    +Maintain()
+    --
+    📁 hack/scripts-dev/
+    📁 scripts/
+  }
+}
+
+' 工具关系连接
+etcdctl --> etcd : 管理和操作\n📁 etcdctl/ → server/
+etcdutl --> etcd : 维护和修复\n📁 etcdutl/ → server/
+benchmark --> etcd : 性能测试\n📁 tools/benchmark/ → server/
+
+etcd_dump_db --> etcd : 数据导出\n📁 tools/etcd-dump-db/
+etcd_dump_logs --> etcd : 日志分析\n📁 tools/etcd-dump-logs/
+etcd_dump_metrics --> etcd : 指标导出\n📁 tools/etcd-dump-metrics/
+
+local_tester --> Agent : 管理测试代理\n📁 tools/local-tester/bridge/
+Agent --> etcd : 控制 etcd 实例\n📁 tools/local-tester/bridge/
+local_tester --> FailureCase : 执行故障案例\n📁 tools/local-tester/bridge/
+
+prometheus_exporter --> etcd : 收集指标\n📁 server/etcdserver/api/v3rpc/metrics.go
+grafana_dashboard --> prometheus_exporter : 可视化指标\n📁 Documentation/op-guide/
+alertmanager_rules --> prometheus_exporter : 告警规则\n📁 Documentation/op-guide/
+
+etcd_operator --> etcd : Kubernetes 部署\n📁 contrib/
+helm_chart --> etcd : Helm 部署\n📁 contrib/helm/
+ansible_playbook --> etcd : Ansible 部署\n📁 hack/scripts-dev/
+
+benchmark --> BenchmarkResult : 生成结果\n📁 tools/benchmark/cmd/util.go
+
+note right of etcdctl
+  主要客户端工具实现:
+  📁 etcdctl/main.go
+  📁 etcdctl/ctlv3/command/
+  
+  命令实现:
+  - global.go: 全局配置
+  - put_command.go: Put 命令
+  - get_command.go: Get 命令
+  - watch_command.go: Watch 命令
+  - lease_command.go: Lease 命令
+  - auth_command.go: Auth 命令
+  - member_command.go: Member 命令
+  - snapshot_command.go: Snapshot 命令
+  
+  依赖:
+  📁 client/v3/: 客户端 SDK
+end note
+
+note right of benchmark
+  性能测试工具实现:
+  📁 tools/benchmark/
+  
+  测试命令:
+  - cmd/put.go: 写入性能测试
+  - cmd/range.go: 读取性能测试
+  - cmd/mixed.go: 混合读写测试
+  - cmd/watch.go: 监听性能测试
+  - cmd/lease.go: 租约性能测试
+  - cmd/stm.go: STM 事务测试
+  
+  工具函数:
+  - cmd/util.go: 通用工具函数
+  - cmd/util.go: 性能统计和报告
+end note
+
+note right of etcdutl
+  数据库工具实现:
+  📁 etcdutl/
+  
+  主要功能:
+  - snapshot_command.go: 快照操作
+  - migrate_command.go: 数据迁移
+  - defrag_command.go: 碎片整理
+  - backup_command.go: 备份操作
+  
+  依赖:
+  📁 server/storage/: 存储引擎
+  📁 server/storage/snap/: 快照管理
+  📁 server/storage/wal/: WAL 管理
+end note
+
+note right of local_tester
+  本地测试框架实现:
+  📁 tools/local-tester/
+  
+  核心组件:
+  - bridge/bridge.go: 测试桥接器
+  - bridge/bridge.go: Agent 管理
+  - bridge/bridge.go: 故障注入
+  
+  测试功能:
+  - 故障注入测试
+  - 一致性验证
+  - 自动化测试
+  - 回归测试
+  
+  故障类型:
+  - 节点崩溃
+  - 网络分区
+  - 磁盘故障
+  - 性能压力
+end note
+
+note as N1
+  工具构建和使用:
+  
+  构建脚本:
+  📁 scripts/build.sh
+  📁 Makefile
+  
+  构建命令:
+  - make build: 构建所有组件
+  - make tools: 构建工具
+  - make test-tools: 测试工具
+  
+  安装路径:
+  - bin/etcd: 服务器二进制
+  - bin/etcdctl: 客户端工具
+  - bin/etcdutl: 数据库工具
+  
+  配置文件:
+  📁 go.mod: Go 模块配置
+  📁 .goreleaser.yml: 发布配置
+end note
+
+note as N2
+  监控集成:
+  
+  Prometheus 指标:
+  📁 server/etcdserver/api/v3rpc/metrics.go
+  📁 server/storage/mvcc/metrics.go
+  📁 server/lease/metrics.go
+  
+  Grafana 仪表板:
+  📁 Documentation/op-guide/grafana.json
+  📁 contrib/grafana-dashboard.json
+  
+  告警规则:
+  📁 Documentation/op-guide/etcd3_alert.rules.yml
+  
+  指标端点:
+  - /metrics: Prometheus 格式指标
+  - /health: 健康检查端点
+  - /debug/pprof/: 性能分析端点
+end note
+
+@enduml

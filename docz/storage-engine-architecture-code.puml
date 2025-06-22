@@ -1,0 +1,342 @@
+@startuml storage-engine-architecture-code
+!theme plain
+title etcd 存储引擎架构图 - 代码实现位置
+
+package "MVCC 多版本并发控制" {
+  class store {
+    +ReadView
+    +WriteView
+    +b: backend.Backend
+    +kvindex: index
+    +currentRev: int64
+    +compactMainRev: int64
+    +Put()
+    +Range()
+    +DeleteRange()
+    +Txn()
+    +Compact()
+    --
+    📁 server/storage/mvcc/kvstore.go:store
+    📁 server/storage/mvcc/kvstore.go:(*store).Put()
+    📁 server/storage/mvcc/kvstore.go:(*store).Range()
+    📁 server/storage/mvcc/kvstore.go:(*store).DeleteRange()
+    📁 server/storage/mvcc/kvstore_txn.go:(*storeTxnRead).Range()
+    📁 server/storage/mvcc/kvstore_txn.go:(*storeTxnWrite).Put()
+  }
+  
+  interface ReadView {
+    +FirstRev(): int64
+    +Rev(): int64
+    +Range()
+    --
+    📁 server/storage/mvcc/kvstore.go:ReadView
+    📁 server/storage/mvcc/kvstore.go:(*store).FirstRev()
+    📁 server/storage/mvcc/kvstore.go:(*store).Rev()
+  }
+  
+  interface WriteView {
+    +DeleteRange()
+    +Put()
+    --
+    📁 server/storage/mvcc/kvstore.go:WriteView
+    📁 server/storage/mvcc/kvstore.go:(*store).Put()
+    📁 server/storage/mvcc/kvstore.go:(*store).DeleteRange()
+  }
+  
+  class watchableStore {
+    +store
+    +victims: []watcherBatch
+    +unsynced: watcherGroup
+    +synced: watcherGroup
+    +notify()
+    +syncWatchers()
+    --
+    📁 server/storage/mvcc/watchable_store.go:watchableStore
+    📁 server/storage/mvcc/watchable_store.go:(*watchableStore).notify()
+    📁 server/storage/mvcc/watchable_store.go:(*watchableStore).syncWatchers()
+    📁 server/storage/mvcc/watchable_store.go:(*watchableStore).Watch()
+  }
+}
+
+package "索引管理 Index Management" {
+  interface index {
+    +Get(): *keyIndex
+    +Put()
+    +Restore()
+    +Range()
+    +Compact()
+    --
+    📁 server/storage/mvcc/index.go:index
+    📁 server/storage/mvcc/index.go:(*treeIndex).Get()
+    📁 server/storage/mvcc/index.go:(*treeIndex).Put()
+    📁 server/storage/mvcc/index.go:(*treeIndex).Range()
+  }
+  
+  class treeIndex {
+    +tree: *btree.BTree
+    +lg: *zap.Logger
+    --
+    📁 server/storage/mvcc/index.go:treeIndex
+    📁 server/storage/mvcc/index.go:newTreeIndex()
+    📁 server/storage/mvcc/index.go:(*treeIndex).Get()
+    📁 server/storage/mvcc/index.go:(*treeIndex).Put()
+    📁 server/storage/mvcc/index.go:(*treeIndex).Compact()
+    📁 github.com/google/btree
+  }
+  
+  class keyIndex {
+    +key: []byte
+    +modified: revision
+    +generations: []generation
+    --
+    📁 server/storage/mvcc/key_index.go:keyIndex
+    📁 server/storage/mvcc/key_index.go:(*keyIndex).put()
+    📁 server/storage/mvcc/key_index.go:(*keyIndex).get()
+    📁 server/storage/mvcc/key_index.go:(*keyIndex).tombstone()
+  }
+  
+  class generation {
+    +ver: int64
+    +created: revision
+    +revs: []revision
+    --
+    📁 server/storage/mvcc/key_index.go:generation
+    📁 server/storage/mvcc/key_index.go:(*generation).isEmpty()
+    📁 server/storage/mvcc/key_index.go:(*generation).walk()
+  }
+}
+
+package "后端存储 Backend Storage" {
+  interface Backend {
+    +ReadTx(): ReadTx
+    +BatchTx(): BatchTx
+    +ConcurrentReadTx(): ReadTx
+    +Snapshot(): Snapshot
+    +Hash(): uint32
+    +Size(): int64
+    +Defrag(): error
+    +Close(): error
+    --
+    📁 server/storage/backend/backend.go:Backend
+    📁 server/storage/backend/backend.go:(*backend).ReadTx()
+    📁 server/storage/backend/backend.go:(*backend).BatchTx()
+    📁 server/storage/backend/backend.go:(*backend).Snapshot()
+  }
+  
+  class backend {
+    +db: *bolt.DB
+    +batchTx: *batchTxBuffered
+    +readTx: *readTx
+    +batchInterval: time.Duration
+    +batchLimit: int
+    +hooks: Hooks
+    --
+    📁 server/storage/backend/backend.go:backend
+    📁 server/storage/backend/backend.go:newBackend()
+    📁 server/storage/backend/backend.go:(*backend).begin()
+    📁 server/storage/backend/backend.go:(*backend).defrag()
+    📁 github.com/etcd-io/bbolt
+  }
+  
+  interface BatchTx {
+    +Lock()
+    +Unlock()
+    +UnsafeCreateBucket()
+    +UnsafePut()
+    +UnsafeSeqPut()
+    +UnsafeDelete()
+    +Commit()
+    --
+    📁 server/storage/backend/batch_tx.go:BatchTx
+    📁 server/storage/backend/batch_tx.go:(*batchTx).UnsafePut()
+    📁 server/storage/backend/batch_tx.go:(*batchTx).UnsafeRange()
+    📁 server/storage/backend/batch_tx.go:(*batchTx).Commit()
+  }
+  
+  class batchTxBuffered {
+    +batchTx
+    +buf: txWriteBuffer
+    --
+    📁 server/storage/backend/batch_tx.go:batchTxBuffered
+    📁 server/storage/backend/batch_tx.go:(*batchTxBuffered).Commit()
+    📁 server/storage/backend/batch_tx.go:(*batchTxBuffered).UnsafePut()
+  }
+}
+
+package "WAL 预写日志" {
+  class WAL {
+    +dir: string
+    +metadata: []byte
+    +state: raftpb.HardState
+    +start: walpb.Snapshot
+    +decoder: *decoder
+    +encoder: *encoder
+    +Save()
+    +SaveSnapshot()
+    +ReadAll()
+    --
+    📁 server/storage/wal/wal.go:WAL
+    📁 server/storage/wal/wal.go:Create()
+    📁 server/storage/wal/wal.go:Open()
+    📁 server/storage/wal/wal.go:(*WAL).Save()
+    📁 server/storage/wal/wal.go:(*WAL).SaveSnapshot()
+    📁 server/storage/wal/wal.go:(*WAL).ReadAll()
+  }
+  
+  class Record {
+    +Type: int64
+    +Crc: uint32
+    +Data: []byte
+    --
+    📁 server/storage/wal/record.go:Record
+    📁 server/storage/wal/encoder.go:(*encoder).encode()
+    📁 server/storage/wal/decoder.go:(*decoder).decode()
+  }
+}
+
+package "快照管理 Snapshot" {
+  class Snapshotter {
+    +dir: string
+    +Save()
+    +Load()
+    +LoadNewestAvailable()
+    +ReleaseSnapDBs()
+    --
+    📁 server/storage/snap/snapshotter.go:Snapshotter
+    📁 server/storage/snap/snapshotter.go:New()
+    📁 server/storage/snap/snapshotter.go:(*Snapshotter).Save()
+    📁 server/storage/snap/snapshotter.go:(*Snapshotter).Load()
+    📁 server/storage/snap/snapshotter.go:(*Snapshotter).LoadNewestAvailable()
+  }
+  
+  class Snapshot {
+    +Data: []byte
+    +Metadata: SnapshotMetadata
+    --
+    📁 server/storage/snap/snapshotter.go:Snapshot
+    📁 server/storage/snap/db.go:(*Snapshot).NewDBSnapshot()
+  }
+}
+
+' 关系连接
+store --> ReadView : 实现\n📁 mvcc/kvstore.go
+store --> WriteView : 实现\n📁 mvcc/kvstore.go
+watchableStore --> store : 扩展\n📁 mvcc/watchable_store.go
+
+store --> index : 使用索引\n📁 mvcc/kvstore.go
+treeIndex --> index : 实现\n📁 mvcc/index.go
+treeIndex --> keyIndex : 管理\n📁 mvcc/key_index.go
+keyIndex --> generation : 包含\n📁 mvcc/key_index.go
+
+store --> Backend : 使用后端\n📁 mvcc/kvstore.go
+backend --> Backend : 实现\n📁 backend/backend.go
+backend --> BatchTx : 包含\n📁 backend/batch_tx.go
+batchTxBuffered --> BatchTx : 实现\n📁 backend/batch_tx.go
+
+backend --> WAL : 日志记录\n📁 backend/ → wal/
+WAL --> Record : 写入记录\n📁 wal/record.go
+
+backend --> Snapshotter : 快照管理\n📁 backend/ → snap/
+Snapshotter --> Snapshot : 创建快照\n📁 snap/snapshotter.go
+
+note right of store
+  MVCC 存储核心实现:
+  📁 server/storage/mvcc/kvstore.go
+  
+  关键方法:
+  - Put(): 存储键值对
+  - Range(): 范围查询
+  - DeleteRange(): 删除范围
+  - Compact(): 压缩历史版本
+  
+  事务支持:
+  📁 server/storage/mvcc/kvstore_txn.go
+  - storeTxnRead: 只读事务
+  - storeTxnWrite: 读写事务
+  - TxnRead(): 创建只读事务
+  - TxnWrite(): 创建读写事务
+end note
+
+note right of treeIndex
+  B+ 树索引实现:
+  📁 server/storage/mvcc/index.go
+  
+  依赖库:
+  📁 github.com/google/btree
+  
+  关键功能:
+  - Get(): 获取键索引
+  - Put(): 更新键索引
+  - Range(): 范围查询索引
+  - Compact(): 压缩索引
+  
+  索引结构:
+  📁 server/storage/mvcc/key_index.go
+  - keyIndex: 键索引结构
+  - generation: 版本代信息
+end note
+
+note right of backend
+  BoltDB 后端实现:
+  📁 server/storage/backend/backend.go
+  
+  依赖库:
+  📁 github.com/etcd-io/bbolt
+  
+  核心功能:
+  - newBackend(): 创建后端
+  - BatchTx(): 批量事务
+  - ReadTx(): 只读事务
+  - Snapshot(): 创建快照
+  - Defrag(): 碎片整理
+  
+  事务实现:
+  📁 server/storage/backend/batch_tx.go
+  - batchTx: 基础批量事务
+  - batchTxBuffered: 缓冲批量事务
+end note
+
+note right of WAL
+  预写日志实现:
+  📁 server/storage/wal/wal.go
+  
+  核心功能:
+  - Create(): 创建 WAL
+  - Open(): 打开 WAL
+  - Save(): 保存记录
+  - ReadAll(): 读取所有记录
+  
+  编解码:
+  📁 server/storage/wal/encoder.go
+  📁 server/storage/wal/decoder.go
+  - encoder: 记录编码器
+  - decoder: 记录解码器
+  
+  记录格式:
+  📁 server/storage/wal/record.go
+end note
+
+note as N1
+  存储引擎初始化流程:
+  
+  1. server/etcdserver/server.go:NewServer()
+     ↓
+  2. server/storage/backend/backend.go:newBackend()
+     ↓ 
+  3. server/storage/mvcc/kvstore.go:NewStore()
+     ↓
+  4. server/storage/mvcc/index.go:newTreeIndex()
+     ↓
+  5. server/storage/mvcc/watchable_store.go:newWatchableStore()
+  
+  数据路径:
+  Put → MVCC → Backend → BoltDB
+  Get → Index → MVCC → Backend → BoltDB
+  
+  关键配置:
+  - QuotaBackendBytes: 后端存储配额
+  - BackendBatchLimit: 批处理限制
+  - BackendBatchInterval: 批处理间隔
+end note
+
+@enduml

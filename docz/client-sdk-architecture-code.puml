@@ -1,0 +1,403 @@
+@startuml client-sdk-architecture-code
+!theme plain
+title etcd 客户端 SDK 架构图 - 代码实现位置
+
+package "客户端核心 Client Core" {
+  class Client {
+    +Cluster
+    +KV
+    +Lease
+    +Watcher
+    +Auth
+    +Maintenance
+    +conn: *grpc.ClientConn
+    +cfg: Config
+    +resolver: *EtcdManualResolver
+    +New()
+    +Close()
+    --
+    📁 client/v3/client.go:Client
+    📁 client/v3/client.go:New()
+    📁 client/v3/client.go:(*Client).Close()
+    📁 client/v3/client.go:(*Client).dial()
+  }
+  
+  class Config {
+    +Endpoints: []string
+    +AutoSyncInterval: time.Duration
+    +DialTimeout: time.Duration
+    +DialKeepAliveTime: time.Duration
+    +DialKeepAliveTimeout: time.Duration
+    +TLS: *tls.Config
+    +Username: string
+    +Password: string
+    +Logger: *zap.Logger
+    --
+    📁 client/v3/config.go:Config
+    📁 client/v3/config.go:(*Config).validate()
+  }
+}
+
+package "KV 接口 KV Interface" {
+  interface KV {
+    +Put(): (*PutResponse, error)
+    +Get(): (*GetResponse, error)
+    +Delete(): (*DeleteResponse, error)
+    +Compact(): (*CompactResponse, error)
+    +Do(): (OpResponse, error)
+    +Txn(): Txn
+    --
+    📁 client/v3/kv.go:KV
+    📁 client/v3/kv.go:(*kv).Put()
+    📁 client/v3/kv.go:(*kv).Get()
+    📁 client/v3/kv.go:(*kv).Delete()
+    📁 client/v3/kv.go:(*kv).Do()
+  }
+  
+  class kv {
+    +remote: pb.KVClient
+    +callOpts: []grpc.CallOption
+    --
+    📁 client/v3/kv.go:kv
+    📁 client/v3/kv.go:NewKV()
+    📁 client/v3/kv.go:(*kv).Put()
+    📁 client/v3/kv.go:(*kv).Get()
+    📁 client/v3/kv.go:(*kv).Delete()
+  }
+  
+  interface Txn {
+    +If(): Txn
+    +Then(): Txn
+    +Else(): Txn
+    +Commit(): (*TxnResponse, error)
+    --
+    📁 client/v3/txn.go:Txn
+    📁 client/v3/txn.go:(*txn).If()
+    📁 client/v3/txn.go:(*txn).Then()
+    📁 client/v3/txn.go:(*txn).Else()
+    📁 client/v3/txn.go:(*txn).Commit()
+  }
+  
+  class txn {
+    +kv: *kv
+    +cif: bool
+    +cthen: bool
+    +celse: bool
+    +cmps: []*pb.Compare
+    +sus: []*pb.RequestOp
+    +fas: []*pb.RequestOp
+    --
+    📁 client/v3/txn.go:txn
+    📁 client/v3/txn.go:(*txn).If()
+    📁 client/v3/txn.go:(*txn).Then()
+    📁 client/v3/txn.go:(*txn).Else()
+  }
+}
+
+package "Watch 接口 Watch Interface" {
+  interface Watcher {
+    +Watch(): WatchChan
+    +RequestProgress(): error
+    +Close(): error
+    --
+    📁 client/v3/watch.go:Watcher
+    📁 client/v3/watch.go:(*watcher).Watch()
+    📁 client/v3/watch.go:(*watcher).RequestProgress()
+    📁 client/v3/watch.go:(*watcher).Close()
+  }
+  
+  class watcher {
+    +remote: pb.WatchClient
+    +callOpts: []grpc.CallOption
+    +mu: sync.RWMutex
+    +streams: map[string]*watchGrpcStream
+    --
+    📁 client/v3/watch.go:watcher
+    📁 client/v3/watch.go:NewWatcher()
+    📁 client/v3/watch.go:(*watcher).Watch()
+    📁 client/v3/watch.go:(*watcher).newWatcherGrpcStream()
+  }
+  
+  class watchGrpcStream {
+    +owner: *watcher
+    +remote: pb.Watch_WatchClient
+    +watcherStream: chan WatchResponse
+    +respc: chan *pb.WatchResponse
+    +donec: chan struct{}
+    +errc: chan error
+    +ctxs: map[int64]*watcherStream
+    --
+    📁 client/v3/watch.go:watchGrpcStream
+    📁 client/v3/watch.go:(*watchGrpcStream).run()
+    📁 client/v3/watch.go:(*watchGrpcStream).serv()
+    📁 client/v3/watch.go:(*watchGrpcStream).newWatcherStream()
+  }
+  
+  class WatchResponse {
+    +Header: pb.ResponseHeader
+    +Events: []*Event
+    +CompactRevision: int64
+    +Canceled: bool
+    +Created: bool
+    --
+    📁 client/v3/watch.go:WatchResponse
+    📁 client/v3/watch.go:(*WatchResponse).IsProgressNotify()
+  }
+}
+
+package "Lease 接口 Lease Interface" {
+  interface Lease {
+    +Grant(): (*LeaseGrantResponse, error)
+    +Revoke(): (*LeaseRevokeResponse, error)
+    +TimeToLive(): (*LeaseTimeToLiveResponse, error)
+    +Leases(): (*LeaseLeasesResponse, error)
+    +KeepAlive(): (<-chan *LeaseKeepAliveResponse, error)
+    +KeepAliveOnce(): (*LeaseKeepAliveResponse, error)
+    +Close(): error
+    --
+    📁 client/v3/lease.go:Lease
+    📁 client/v3/lease.go:(*lessor).Grant()
+    📁 client/v3/lease.go:(*lessor).Revoke()
+    📁 client/v3/lease.go:(*lessor).KeepAlive()
+  }
+  
+  class lessor {
+    +remote: pb.LeaseClient
+    +callOpts: []grpc.CallOption
+    +mu: sync.RWMutex
+    +keepAlives: map[LeaseID]*keepAlive
+    +firstKeepAliveTimeout: time.Duration
+    --
+    📁 client/v3/lease.go:lessor
+    📁 client/v3/lease.go:NewLease()
+    📁 client/v3/lease.go:(*lessor).Grant()
+    📁 client/v3/lease.go:(*lessor).KeepAlive()
+    📁 client/v3/lease.go:(*lessor).keepAliveOnce()
+  }
+  
+  class keepAlive {
+    +chs: []chan<- *LeaseKeepAliveResponse
+    +ctxs: []context.Context
+    +deadline: time.Time
+    +nextKeepAlive: time.Time
+    +donec: chan struct{}
+    --
+    📁 client/v3/lease.go:keepAlive
+    📁 client/v3/lease.go:(*lessor).keepAliveCtxCloser()
+    📁 client/v3/lease.go:(*lessor).recvKeepAlive()
+  }
+}
+
+package "Auth 接口 Auth Interface" {
+  interface Auth {
+    +AuthEnable(): (*AuthEnableResponse, error)
+    +AuthDisable(): (*AuthDisableResponse, error)
+    +Authenticate(): (*AuthenticateResponse, error)
+    +UserAdd(): (*AuthUserAddResponse, error)
+    +UserDelete(): (*AuthUserDeleteResponse, error)
+    +UserChangePassword(): (*AuthUserChangePasswordResponse, error)
+    +UserGrantRole(): (*AuthUserGrantRoleResponse, error)
+    +UserGet(): (*AuthUserGetResponse, error)
+    +UserList(): (*AuthUserListResponse, error)
+    +UserRevokeRole(): (*AuthUserRevokeRoleResponse, error)
+    +RoleAdd(): (*AuthRoleAddResponse, error)
+    +RoleGrantPermission(): (*AuthRoleGrantPermissionResponse, error)
+    +RoleGet(): (*AuthRoleGetResponse, error)
+    +RoleList(): (*AuthRoleListResponse, error)
+    +RoleRevokePermission(): (*AuthRoleRevokePermissionResponse, error)
+    +RoleDelete(): (*AuthRoleDeleteResponse, error)
+    --
+    📁 client/v3/auth.go:Auth
+    📁 client/v3/auth.go:(*auth).AuthEnable()
+    📁 client/v3/auth.go:(*auth).Authenticate()
+    📁 client/v3/auth.go:(*auth).UserAdd()
+    📁 client/v3/auth.go:(*auth).RoleAdd()
+  }
+  
+  class auth {
+    +remote: pb.AuthClient
+    +callOpts: []grpc.CallOption
+    --
+    📁 client/v3/auth.go:auth
+    📁 client/v3/auth.go:NewAuth()
+    📁 client/v3/auth.go:(*auth).Authenticate()
+    📁 client/v3/auth.go:(*auth).UserAdd()
+  }
+}
+
+package "连接管理 Connection Management" {
+  class resolver.EtcdManualResolver {
+    +endpoints: []string
+    +cc: resolver.ClientConn
+    +UpdateState()
+    +ResolveNow()
+    +Close()
+    --
+    📁 client/v3/naming/resolver.go:EtcdManualResolver
+    📁 client/v3/naming/resolver.go:(*EtcdManualResolver).UpdateState()
+    📁 client/v3/naming/resolver.go:(*EtcdManualResolver).ResolveNow()
+  }
+  
+  class balancer {
+    +endpoints: []string
+    +pinAddr: string
+    +mu: sync.RWMutex
+    +Build()
+    +Pick()
+    +Close()
+    --
+    📁 client/v3/balancer/balancer.go:baseBalancer
+    📁 client/v3/balancer/picker/picker.go:Picker
+    📁 client/v3/balancer/picker/roundrobin.go:rrPicker
+  }
+  
+  class healthBalancer {
+    +balancer
+    +unhealthyHostPort: map[string]time.Time
+    +hostPortError: map[string]error
+    +unhealthyMu: sync.RWMutex
+    --
+    📁 client/v3/balancer/picker/health.go:healthPicker
+    📁 client/v3/balancer/picker/health.go:(*healthPicker).Pick()
+  }
+}
+
+package "重试机制 Retry Logic" {
+  class retryInterceptor {
+    +retryPolicy: retryPolicy
+    +UnaryClientInterceptor()
+    +StreamClientInterceptor()
+    --
+    📁 client/v3/retry.go:retryInterceptor
+    📁 client/v3/retry.go:RetryInterceptor()
+    📁 client/v3/retry.go:unaryClientInterceptor()
+    📁 client/v3/retry.go:streamClientInterceptor()
+  }
+  
+  class retryPolicy {
+    +max: int
+    +backoff: backoffFunc
+    +retryableFunc: retryableFunc
+    --
+    📁 client/v3/retry.go:retryPolicy
+    📁 client/v3/retry.go:(*retryPolicy).retryable()
+    📁 client/v3/retry.go:isRetryableError()
+  }
+}
+
+' 关系连接
+Client --> Config : 使用配置\n📁 client/v3/config.go
+Client --> KV : 实现接口\n📁 client/v3/kv.go
+Client --> Watcher : 实现接口\n📁 client/v3/watch.go
+Client --> Lease : 实现接口\n📁 client/v3/lease.go
+Client --> Auth : 实现接口\n📁 client/v3/auth.go
+
+kv --> KV : 实现\n📁 client/v3/kv.go
+txn --> Txn : 实现\n📁 client/v3/txn.go
+kv --> txn : 创建事务\n📁 client/v3/kv.go
+
+watcher --> Watcher : 实现\n📁 client/v3/watch.go
+watcher --> watchGrpcStream : 管理流\n📁 client/v3/watch.go
+watchGrpcStream --> WatchResponse : 生成响应\n📁 client/v3/watch.go
+
+lessor --> Lease : 实现\n📁 client/v3/lease.go
+lessor --> keepAlive : 管理续约\n📁 client/v3/lease.go
+
+auth --> Auth : 实现\n📁 client/v3/auth.go
+
+Client --> resolver.EtcdManualResolver : 使用解析器\n📁 client/v3/naming/
+resolver.EtcdManualResolver --> balancer : 负载均衡\n📁 client/v3/balancer/
+balancer --> healthBalancer : 健康检查\n📁 client/v3/balancer/picker/
+
+Client --> retryInterceptor : 重试拦截器\n📁 client/v3/retry.go
+retryInterceptor --> retryPolicy : 重试策略\n📁 client/v3/retry.go
+
+note right of Client
+  客户端主入口实现:
+  📁 client/v3/client.go
+  
+  关键方法:
+  - New(): 创建客户端实例
+  - dial(): 建立 gRPC 连接
+  - Close(): 关闭客户端连接
+  - Sync(): 同步端点列表
+  
+  配置管理:
+  📁 client/v3/config.go
+  - Config: 客户端配置结构
+  - validate(): 配置验证
+end note
+
+note right of watchGrpcStream
+  Watch 流管理实现:
+  📁 client/v3/watch.go
+  
+  核心方法:
+  - run(): 主运行循环
+  - serv(): 服务处理循环
+  - newWatcherStream(): 创建监听流
+  - closeWatcherStream(): 关闭监听流
+  
+  流管理:
+  - 维护 gRPC 双向流
+  - 处理事件分发
+  - 管理多个监听器
+  - 错误处理和重连
+end note
+
+note right of keepAlive
+  租约续期管理实现:
+  📁 client/v3/lease.go
+  
+  续期机制:
+  - keepAliveCtxCloser(): 上下文关闭处理
+  - recvKeepAlive(): 接收续期响应
+  - sendKeepAliveLoop(): 发送续期循环
+  
+  特性:
+  - 自动续期机制
+  - 多通道支持
+  - 超时处理
+  - 生命周期管理
+end note
+
+note right of healthBalancer
+  健康检查负载均衡实现:
+  📁 client/v3/balancer/picker/health.go
+  
+  负载均衡策略:
+  📁 client/v3/balancer/picker/roundrobin.go
+  📁 client/v3/balancer/picker/priority.go
+  
+  功能:
+  - 端点健康监控
+  - 故障转移
+  - 连接管理
+  - 性能优化
+end note
+
+note as N1
+  客户端初始化流程:
+  
+  1. client/v3/client.go:New()
+     ↓
+  2. client/v3/client.go:(*Client).dial()
+     ↓
+  3. client/v3/naming/resolver.go:NewBuilder()
+     ↓
+  4. client/v3/balancer/balancer.go:newBaseBalancer()
+     ↓
+  5. client/v3/retry.go:RetryInterceptor()
+     ↓
+  6. google.golang.org/grpc:DialContext()
+  
+  接口创建:
+  - NewKV(): KV 接口
+  - NewWatcher(): Watch 接口  
+  - NewLease(): Lease 接口
+  - NewAuth(): Auth 接口
+  - NewCluster(): Cluster 接口
+  - NewMaintenance(): Maintenance 接口
+end note
+
+@enduml

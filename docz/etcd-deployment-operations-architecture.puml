@@ -1,0 +1,352 @@
+@startuml etcd-deployment-operations-architecture
+!theme plain
+title etcd 部署架构与运维设计
+
+' ===== 集群部署架构 =====
+package "集群部署架构 Cluster Deployment Architecture" {
+  
+  ' 多数据中心部署
+  package "数据中心 A Data Center A" <<Cloud>> {
+    node "etcd-1" as ETCD1 {
+      [etcd process] as ETCD_PROC1
+      [data dir] as DATA1
+      [wal dir] as WAL1
+      database "BoltDB" as DB1
+    }
+    
+    node "etcd-2" as ETCD2 {
+      [etcd process] as ETCD_PROC2
+      [data dir] as DATA2
+      [wal dir] as WAL2
+      database "BoltDB" as DB2
+    }
+  }
+  
+  package "数据中心 B Data Center B" <<Cloud>> {
+    node "etcd-3" as ETCD3 {
+      [etcd process] as ETCD_PROC3
+      [data dir] as DATA3
+      [wal dir] as WAL3
+      database "BoltDB" as DB3
+    }
+    
+    node "etcd-4" as ETCD4 {
+      [etcd process] as ETCD_PROC4
+      [data dir] as DATA4
+      [wal dir] as WAL4
+      database "BoltDB" as DB4
+    }
+  }
+  
+  package "数据中心 C Data Center C" <<Cloud>> {
+    node "etcd-5" as ETCD5 {
+      [etcd process] as ETCD_PROC5
+      [data dir] as DATA5
+      [wal dir] as WAL5
+      database "BoltDB" as DB5
+    }
+  }
+  
+  ' Raft 集群连接
+  ETCD_PROC1 <--> ETCD_PROC2 : Raft Peer
+  ETCD_PROC1 <--> ETCD_PROC3 : Raft Peer
+  ETCD_PROC1 <--> ETCD_PROC4 : Raft Peer
+  ETCD_PROC1 <--> ETCD_PROC5 : Raft Peer
+  ETCD_PROC2 <--> ETCD_PROC3 : Raft Peer
+  ETCD_PROC2 <--> ETCD_PROC4 : Raft Peer
+  ETCD_PROC2 <--> ETCD_PROC5 : Raft Peer
+  ETCD_PROC3 <--> ETCD_PROC4 : Raft Peer
+  ETCD_PROC3 <--> ETCD_PROC5 : Raft Peer
+  ETCD_PROC4 <--> ETCD_PROC5 : Raft Peer
+  
+  note as CLUSTER_NOTE
+    集群部署设计原则:
+    
+    1. 奇数节点部署
+       - 避免脑裂问题
+       - 保证多数派选举
+    
+    2. 跨数据中心分布
+       - 提高可用性
+       - 容忍数据中心故障
+    
+    3. 网络延迟考虑
+       - 同城部署优先
+       - 控制网络延迟 < 10ms
+    
+    4. 硬件配置
+       - SSD 存储
+       - 充足内存
+       - 专用网络
+  end note
+}
+
+' ===== 负载均衡与代理 =====
+package "负载均衡 Load Balancing" {
+  
+  cloud "客户端应用 Client Applications" as CLIENTS
+  
+  node "负载均衡器 Load Balancer" as LB {
+    [HAProxy/Nginx] as PROXY
+    [健康检查] as HEALTH_CHECK
+    [故障转移] as FAILOVER
+  }
+  
+  node "etcd 代理 etcd Proxy" as ETCD_PROXY {
+    [grpc-proxy] as GRPC_PROXY
+    [连接池] as CONN_POOL
+    [请求路由] as ROUTING
+  }
+  
+  CLIENTS --> LB : 客户端请求
+  LB --> ETCD_PROXY : 代理转发
+  ETCD_PROXY --> ETCD_PROC1 : 读写分离
+  ETCD_PROXY --> ETCD_PROC2 : 只读请求
+  ETCD_PROXY --> ETCD_PROC3 : 只读请求
+  
+  note right of LB
+    负载均衡策略:
+    
+    1. 读写分离
+       - 写请求路由到 Leader
+       - 读请求分发到所有节点
+    
+    2. 健康检查
+       - 定期检查节点状态
+       - 自动摘除故障节点
+    
+    3. 连接管理
+       - 连接池复用
+       - 长连接保持
+    
+    4. 故障转移
+       - 快速故障检测
+       - 自动切换备用节点
+  end note
+}
+
+' ===== 监控与告警 =====
+package "监控告警 Monitoring & Alerting" {
+  
+  node "监控系统 Monitoring System" as MONITORING {
+    [Prometheus] as PROMETHEUS
+    [Grafana] as GRAFANA
+    [AlertManager] as ALERT_MGR
+  }
+  
+  node "日志系统 Logging System" as LOGGING {
+    [Fluentd/Logstash] as LOG_COLLECTOR
+    [Elasticsearch] as ES
+    [Kibana] as KIBANA
+  }
+  
+  node "链路追踪 Distributed Tracing" as TRACING {
+    [Jaeger/Zipkin] as TRACER
+    [OpenTelemetry] as OTEL
+  }
+  
+  ' 监控数据收集
+  ETCD_PROC1 --> PROMETHEUS : /metrics
+  ETCD_PROC2 --> PROMETHEUS : /metrics
+  ETCD_PROC3 --> PROMETHEUS : /metrics
+  ETCD_PROC4 --> PROMETHEUS : /metrics
+  ETCD_PROC5 --> PROMETHEUS : /metrics
+  
+  ' 日志收集
+  ETCD_PROC1 --> LOG_COLLECTOR : 日志
+  ETCD_PROC2 --> LOG_COLLECTOR : 日志
+  ETCD_PROC3 --> LOG_COLLECTOR : 日志
+  
+  ' 可视化
+  PROMETHEUS --> GRAFANA : 指标查询
+  LOG_COLLECTOR --> ES : 日志存储
+  ES --> KIBANA : 日志查询
+  
+  ' 告警
+  PROMETHEUS --> ALERT_MGR : 告警规则
+  
+  note right of MONITORING
+    监控指标体系:
+    
+    📊 性能指标:
+    - 请求延迟 (P50, P95, P99)
+    - 请求吞吐量 (QPS)
+    - 错误率统计
+    
+    🔧 系统指标:
+    - CPU、内存使用率
+    - 磁盘 I/O 和空间
+    - 网络流量和延迟
+    
+    🎯 业务指标:
+    - Raft 状态和任期
+    - 集群成员状态
+    - 数据库大小和压缩
+    
+    ⚠️ 告警规则:
+    - 节点不可用
+    - 性能异常
+    - 存储空间不足
+  end note
+}
+
+' ===== 备份与恢复 =====
+package "备份恢复 Backup & Recovery" {
+  
+  node "备份系统 Backup System" as BACKUP {
+    [定时备份] as SCHEDULED_BACKUP
+    [增量备份] as INCREMENTAL_BACKUP
+    [快照管理] as SNAPSHOT_MGR
+  }
+  
+  node "存储系统 Storage System" as STORAGE {
+    [对象存储 S3/OSS] as OBJECT_STORAGE
+    [本地存储] as LOCAL_STORAGE
+    [网络存储 NFS] as NETWORK_STORAGE
+  }
+  
+  node "恢复系统 Recovery System" as RECOVERY {
+    [快照恢复] as SNAPSHOT_RESTORE
+    [数据验证] as DATA_VALIDATION
+    [集群重建] as CLUSTER_REBUILD
+  }
+  
+  ' 备份流程
+  ETCD_PROC1 --> SCHEDULED_BACKUP : etcdctl snapshot save
+  SCHEDULED_BACKUP --> OBJECT_STORAGE : 上传备份
+  
+  ' 恢复流程
+  OBJECT_STORAGE --> SNAPSHOT_RESTORE : 下载备份
+  SNAPSHOT_RESTORE --> ETCD_PROC1 : etcdutl snapshot restore
+  
+  note right of BACKUP
+    备份恢复策略:
+    
+    🔄 备份策略:
+    - 全量快照备份
+    - WAL 增量备份
+    - 多地域存储
+    
+    ⏰ 备份频率:
+    - 每日全量备份
+    - 每小时增量备份
+    - 关键操作前备份
+    
+    🔧 恢复流程:
+    - 数据一致性验证
+    - 集群成员重建
+    - 服务逐步启动
+    
+    ✅ 验证机制:
+    - 备份完整性检查
+    - 恢复数据验证
+    - 功能测试验证
+  end note
+}
+
+' ===== 安全架构 =====
+package "安全架构 Security Architecture" {
+  
+  node "网络安全 Network Security" as NETWORK_SEC {
+    [TLS 加密] as TLS
+    [防火墙] as FIREWALL
+    [VPN 隧道] as VPN
+  }
+  
+  node "认证授权 Authentication & Authorization" as AUTH_SEC {
+    [RBAC 权限] as RBAC
+    [JWT 令牌] as JWT
+    [证书管理] as CERT_MGR
+  }
+  
+  node "审计日志 Audit Logging" as AUDIT {
+    [操作审计] as OP_AUDIT
+    [访问日志] as ACCESS_LOG
+    [安全事件] as SEC_EVENT
+  }
+  
+  ' 安全连接
+  CLIENTS -.-> TLS : HTTPS/gRPC-TLS
+  TLS -.-> ETCD_PROC1 : 加密通信
+  
+  note right of NETWORK_SEC
+    安全设计原则:
+    
+    🔐 传输安全:
+    - TLS 1.3 加密通信
+    - 双向证书认证
+    - 证书自动轮换
+    
+    🛡️ 访问控制:
+    - RBAC 细粒度权限
+    - 最小权限原则
+    - 定期权限审查
+    
+    📝 审计追踪:
+    - 完整操作日志
+    - 安全事件监控
+    - 合规性报告
+    
+    🔧 安全运维:
+    - 定期安全扫描
+    - 漏洞修复管理
+    - 应急响应预案
+  end note
+}
+
+' ===== 容量规划 =====
+package "容量规划 Capacity Planning" {
+  
+  class "性能基准 Performance Baseline" as PERF_BASELINE {
+    +读取 QPS: 100,000+
+    +写入 QPS: 10,000+
+    +延迟 P99: < 10ms
+    +存储容量: 8GB 默认
+    --
+    基于硬件配置和负载模式
+  }
+  
+  class "扩容策略 Scaling Strategy" as SCALING_STRATEGY {
+    +垂直扩容: 增加硬件资源
+    +水平扩容: 增加集群节点
+    +读写分离: 只读节点扩展
+    +分片策略: 数据分区
+    --
+    根据业务增长预测
+  }
+  
+  class "资源监控 Resource Monitoring" as RESOURCE_MON {
+    +CPU 使用率监控
+    +内存使用率监控
+    +磁盘空间监控
+    +网络带宽监控
+    --
+    实时资源使用情况
+  }
+  
+  note as CAPACITY_NOTE
+    容量规划考虑因素:
+    
+    📈 业务增长:
+    - 用户数量增长
+    - 数据量增长
+    - 请求量增长
+    
+    🎯 性能目标:
+    - 响应时间要求
+    - 吞吐量要求
+    - 可用性要求
+    
+    💰 成本控制:
+    - 硬件成本
+    - 运维成本
+    - 云服务成本
+    
+    🔮 未来规划:
+    - 3-5 年容量预测
+    - 技术演进考虑
+    - 业务发展规划
+  end note
+}
+
+@enduml

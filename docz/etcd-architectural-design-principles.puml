@@ -1,0 +1,388 @@
+@startuml etcd-architectural-design-principles
+!theme plain
+title etcd 架构设计原则与模式 - 基于源码分析
+
+' ===== 分层架构设计 =====
+package "分层架构 Layered Architecture" {
+  
+  ' 客户端接入层 - 多协议支持
+  package "接入层 Access Layer" <<Cloud>> {
+    interface "gRPC Protocol" as GRPC_PROTO {
+      +KV, Watch, Lease, Auth
+      +Cluster, Maintenance
+      --
+      📁 api/etcdserverpb/rpc.proto
+      设计原则: 协议无关性
+    }
+    
+    interface "HTTP/REST Protocol" as HTTP_PROTO {
+      +RESTful API Gateway
+      +JSON ↔ Protobuf 转换
+      --
+      📁 grpc-gateway
+      设计原则: 多协议兼容
+    }
+    
+    class "Client SDK" as CLIENT_SDK {
+      +统一接口抽象
+      +连接池管理
+      +负载均衡
+      +故障转移
+      --
+      📁 client/v3/client.go
+      设计模式: Facade 门面模式
+    }
+  }
+  
+  ' API 网关层 - 装饰器模式
+  package "网关层 Gateway Layer" <<Rectangle>> {
+    abstract class "BaseKVServer" as BASE_KV {
+      +Range(), Put(), Delete()
+      +Txn(), Compact()
+      --
+      📁 server/etcdserver/api/v3rpc/key.go
+      设计原则: 单一职责
+    }
+    
+    class "QuotaKVServer" as QUOTA_KV {
+      -kvServer: KVServer
+      +checkQuota()
+      +Put(), Txn()
+      --
+      📁 server/etcdserver/api/v3rpc/quota.go
+      设计模式: Decorator 装饰器
+    }
+    
+    class "AuthKVServer" as AUTH_KV {
+      -kvServer: KVServer
+      +checkAuth()
+      +Range(), Put(), Delete()
+      --
+      📁 server/etcdserver/api/v3rpc/auth.go
+      设计模式: Decorator 装饰器
+    }
+    
+    class "InterceptorChain" as INTERCEPTOR {
+      +UnaryInterceptor()
+      +StreamInterceptor()
+      --
+      📁 server/etcdserver/api/v3rpc/interceptor.go
+      设计模式: Chain of Responsibility
+    }
+  }
+  
+  ' 核心业务层 - 依赖注入
+  package "业务层 Business Layer" <<Rectangle>> {
+    class "EtcdServer" as ETCD_SERVER {
+      -kv: mvcc.WatchableKV
+      -lessor: lease.Lessor
+      -authStore: auth.AuthStore
+      -raftNode: *raftNode
+      -cluster: *membership.RaftCluster
+      +Process(), Apply()
+      --
+      📁 server/etcdserver/server.go
+      设计模式: Dependency Injection
+      设计原则: 控制反转 IoC
+    }
+    
+    interface "Applier" as APPLIER_INTERFACE {
+      +Apply()
+      +Put(), Range(), Delete()
+      +Txn()
+    }
+    
+    class "UberApplier" as UBER_APPLIER {
+      -applyV3: ApplierV3
+      +Apply()
+      +dispatch()
+      --
+      📁 server/etcdserver/apply/uber_applier.go
+      设计模式: Strategy + Template Method
+    }
+  }
+  
+  ' 一致性层 - 状态机模式
+  package "一致性层 Consensus Layer" <<Rectangle>> {
+    interface "StateMachine" as STATE_MACHINE {
+      +Apply()
+      +Snapshot()
+      +Restore()
+    }
+    
+    class "RaftNode" as RAFT_NODE {
+      -node: raft.Node
+      -storage: *raft.MemoryStorage
+      -transport: rafthttp.Transporter
+      +propose(), step()
+      --
+      📁 server/etcdserver/raft.go
+      设计模式: State Machine
+    }
+    
+    class "RaftStateMachine" as RAFT_SM {
+      +Leader, Follower, Candidate
+      +handleAppendEntries()
+      +handleRequestVote()
+      --
+      📁 raft/raft.go
+      设计模式: State Pattern
+    }
+  }
+  
+  ' 存储层 - 策略模式与观察者模式
+  package "存储层 Storage Layer" <<Database>> {
+    interface "KV" as KV_INTERFACE {
+      +Read(), Write()
+      +Range(), Put(), Delete()
+      --
+      📁 server/storage/mvcc/kv.go
+      设计原则: 接口隔离
+    }
+    
+    class "WatchableStore" as WATCHABLE_STORE {
+      -store: *store
+      -synced: watcherGroup
+      -unsynced: watcherGroup
+      +watch(), notify()
+      --
+      📁 server/storage/mvcc/watchable_store.go
+      设计模式: Observer 观察者
+    }
+    
+    class "MVCCStore" as MVCC_STORE {
+      -kvindex: index
+      -backend: backend.Backend
+      +Put(), Range(), Delete()
+      --
+      📁 server/storage/mvcc/kvstore.go
+      设计模式: Strategy 策略
+    }
+    
+    interface "Backend" as BACKEND_INTERFACE {
+      +ReadTx(), BatchTx()
+      +Snapshot(), Hash()
+      --
+      📁 server/storage/backend/backend.go
+      设计模式: Strategy 策略
+    }
+  }
+}
+
+' ===== 设计模式关系 =====
+package "设计模式实现 Design Patterns" {
+  
+  ' 装饰器模式链
+  BASE_KV <|-- QUOTA_KV : 装饰
+  QUOTA_KV <|-- AUTH_KV : 装饰
+  note right of AUTH_KV
+    装饰器模式 (Decorator Pattern)
+    
+    动态添加功能:
+    - 配额检查装饰器
+    - 权限验证装饰器
+    - 日志记录装饰器
+    
+    优势:
+    - 功能组合灵活
+    - 单一职责原则
+    - 开闭原则
+  end note
+  
+  ' 观察者模式
+  class "WatcherGroup" as WATCHER_GROUP {
+    +add(), delete()
+    +choose(), notify()
+    --
+    📁 server/storage/mvcc/watcher_group.go
+  }
+  
+  class "Watcher" as WATCHER {
+    +send()
+    +filter()
+    --
+    📁 server/storage/mvcc/watcher.go
+  }
+  
+  WATCHABLE_STORE --> WATCHER_GROUP : 管理
+  WATCHER_GROUP --> WATCHER : 包含
+  note right of WATCHER
+    观察者模式 (Observer Pattern)
+    
+    事件通知机制:
+    - 键值变更事件
+    - 异步事件分发
+    - 过滤器支持
+    
+    优势:
+    - 松耦合设计
+    - 支持广播通信
+    - 动态订阅/取消
+  end note
+  
+  ' 策略模式
+  interface "CompactionStrategy" as COMPACT_STRATEGY {
+    +Compact()
+  }
+  
+  class "PeriodicCompactor" as PERIODIC_COMPACT {
+    +Compact()
+    --
+    📁 server/storage/mvcc/compactor/periodic.go
+  }
+  
+  class "RevisionCompactor" as REVISION_COMPACT {
+    +Compact()
+    --
+    📁 server/storage/mvcc/compactor/revision.go
+  }
+  
+  COMPACT_STRATEGY <|.. PERIODIC_COMPACT
+  COMPACT_STRATEGY <|.. REVISION_COMPACT
+  note right of COMPACT_STRATEGY
+    策略模式 (Strategy Pattern)
+    
+    压缩策略:
+    - 定期压缩策略
+    - 版本压缩策略
+    
+    优势:
+    - 算法可替换
+    - 运行时切换
+    - 易于扩展
+  end note
+}
+
+' ===== 架构原则体现 =====
+package "架构原则 Architectural Principles" {
+  
+  class "DependencyInversion" as DI_PRINCIPLE {
+    高层模块不依赖低层模块
+    两者都依赖于抽象
+    --
+    体现:
+    - EtcdServer 依赖接口
+    - 通过构造函数注入
+    - 配置驱动组装
+  }
+  
+  class "SingleResponsibility" as SRP_PRINCIPLE {
+    每个类只有一个变化原因
+    --
+    体现:
+    - KV 操作独立
+    - Auth 认证独立
+    - Watch 监听独立
+    - Lease 租约独立
+  }
+  
+  class "OpenClosed" as OCP_PRINCIPLE {
+    对扩展开放，对修改关闭
+    --
+    体现:
+    - 装饰器模式扩展功能
+    - 插件化架构
+    - 接口驱动设计
+  }
+  
+  class "InterfaceSegregation" as ISP_PRINCIPLE {
+    客户端不应依赖不需要的接口
+    --
+    体现:
+    - ReadView / WriteView 分离
+    - 细粒度接口设计
+    - 按需实现接口
+  }
+}
+
+' ===== 数据流与控制流 =====
+package "数据流设计 Data Flow Design" {
+  
+  ' 请求处理流水线
+  CLIENT_SDK --> INTERCEPTOR : 1. 请求拦截
+  INTERCEPTOR --> AUTH_KV : 2. 权限检查
+  AUTH_KV --> QUOTA_KV : 3. 配额检查
+  QUOTA_KV --> BASE_KV : 4. 业务处理
+  BASE_KV --> ETCD_SERVER : 5. 服务调用
+  ETCD_SERVER --> RAFT_NODE : 6. 一致性处理
+  RAFT_NODE --> MVCC_STORE : 7. 状态应用
+  MVCC_STORE --> BACKEND_INTERFACE : 8. 持久化
+  
+  ' 事件通知流
+  MVCC_STORE --> WATCHABLE_STORE : 事件产生
+  WATCHABLE_STORE --> WATCHER_GROUP : 事件分发
+  WATCHER_GROUP --> CLIENT_SDK : 事件推送
+  
+  note as FLOW_NOTE
+    数据流设计原则:
+    
+    1. 单向数据流
+       - 请求从上到下
+       - 事件从下到上
+    
+    2. 管道过滤器
+       - 拦截器链处理
+       - 装饰器链增强
+    
+    3. 异步事件驱动
+       - Watch 事件异步
+       - Raft 消息异步
+    
+    4. 分层职责清晰
+       - 每层专注特定职责
+       - 层间通过接口通信
+  end note
+}
+
+' ===== 并发控制设计 =====
+package "并发控制 Concurrency Control" {
+  
+  class "MVCCConcurrency" as MVCC_CONCURRENCY {
+    +读写分离
+    +版本控制
+    +无锁读取
+    --
+    📁 server/storage/mvcc/kvstore.go
+    设计原则: 乐观并发控制
+  }
+  
+  class "RaftConcurrency" as RAFT_CONCURRENCY {
+    +Leader 串行化写入
+    +Follower 并行读取
+    +消息异步处理
+    --
+    📁 raft/raft.go
+    设计原则: 主从复制
+  }
+  
+  class "WatchConcurrency" as WATCH_CONCURRENCY {
+    +事件异步分发
+    +批量处理优化
+    +背压控制
+    --
+    📁 server/storage/mvcc/watchable_store.go
+    设计原则: 生产者消费者
+  }
+  
+  note as CONCURRENCY_NOTE
+    并发控制策略:
+    
+    1. 读写分离
+       - MVCC 支持并发读
+       - Raft 保证写一致性
+    
+    2. 无锁设计
+       - 版本号乐观控制
+       - CAS 原子操作
+    
+    3. 异步处理
+       - 事件异步分发
+       - 消息异步传输
+    
+    4. 背压控制
+       - 慢消费者处理
+       - 流量控制机制
+  end note
+}
+
+@enduml

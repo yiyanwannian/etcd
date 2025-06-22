@@ -1,0 +1,301 @@
+@startuml tools-ecosystem
+!theme plain
+title etcd 工具生态系统
+
+package "命令行工具 Command Line Tools" {
+  class etcdctl {
+    +endpoints: []string
+    +dialTimeout: time.Duration
+    +commandTimeout: time.Duration
+    +user: string
+    +password: string
+    +cacert: string
+    +cert: string
+    +key: string
+    +Put()
+    +Get()
+    +Del()
+    +Watch()
+    +Lease()
+    +Auth()
+    +Member()
+    +Snapshot()
+    +Txn()
+  }
+  
+  class etcdutl {
+    +dataDir: string
+    +walDir: string
+    +snapshotFile: string
+    +SnapshotSave()
+    +SnapshotRestore()
+    +SnapshotStatus()
+    +Migrate()
+    +Defrag()
+    +Check()
+    +Compact()
+  }
+  
+  class etcd {
+    +name: string
+    +dataDir: string
+    +walDir: string
+    +listenClientUrls: []url.URL
+    +listenPeerUrls: []url.URL
+    +initialCluster: string
+    +initialClusterState: string
+    +Start()
+    +Stop()
+    +Serve()
+  }
+}
+
+package "性能测试工具 Benchmark Tools" {
+  class benchmark {
+    +endpoints: []string
+    +clients: int
+    +conns: int
+    +keySize: int
+    +valSize: int
+    +total: int
+    +rate: int
+    +Put()
+    +Range()
+    +Mixed()
+    +Watch()
+    +Lease()
+    +STM()
+  }
+  
+  class BenchmarkResult {
+    +Total: int
+    +Seconds: float64
+    +RPS: float64
+    +AvgLatency: time.Duration
+    +P50Latency: time.Duration
+    +P95Latency: time.Duration
+    +P99Latency: time.Duration
+    +P999Latency: time.Duration
+  }
+}
+
+package "数据导出工具 Data Export Tools" {
+  class etcd_dump_db {
+    +dbPath: string
+    +ListBucket()
+    +IterateBucket()
+    +DumpKeys()
+    +DumpValues()
+  }
+  
+  class etcd_dump_logs {
+    +walDir: string
+    +DumpWAL()
+    +DumpEntries()
+    +AnalyzeLog()
+  }
+  
+  class etcd_dump_metrics {
+    +endpoints: []string
+    +outputFile: string
+    +DumpMetrics()
+    +ExportPrometheus()
+  }
+}
+
+package "本地测试工具 Local Testing Tools" {
+  class local_tester {
+    +agentEndpoints: []string
+    +stressKeyCount: int
+    +stressKeySize: int
+    +failureCases: []string
+    +RunTest()
+    +InjectFailure()
+    +CheckConsistency()
+    +GenerateReport()
+  }
+  
+  class Agent {
+    +endpoint: string
+    +etcdPath: string
+    +dataDir: string
+    +Start()
+    +Stop()
+    +Kill()
+    +Restart()
+    +Status()
+  }
+  
+  class FailureCase {
+    +name: string
+    +description: string
+    +Execute()
+    +Recover()
+  }
+}
+
+package "开发工具 Development Tools" {
+  class proto_annotations {
+    +protoFiles: []string
+    +outputDir: string
+    +Generate()
+    +Validate()
+  }
+  
+  class mod_tools {
+    +goMod: string
+    +Update()
+    +Tidy()
+    +Vendor()
+    +Check()
+  }
+  
+  class testgrid_analysis {
+    +testResults: []TestResult
+    +Analyze()
+    +GenerateReport()
+    +FindFlaky()
+  }
+}
+
+package "监控工具 Monitoring Tools" {
+  class prometheus_exporter {
+    +metricsPath: string
+    +listenAddress: string
+    +etcdEndpoints: []string
+    +CollectMetrics()
+    +ExportMetrics()
+  }
+  
+  class grafana_dashboard {
+    +dashboardConfig: string
+    +panels: []Panel
+    +CreateDashboard()
+    +UpdatePanels()
+  }
+  
+  class alertmanager_rules {
+    +rulesFile: string
+    +alertRules: []AlertRule
+    +LoadRules()
+    +ValidateRules()
+  }
+}
+
+package "部署工具 Deployment Tools" {
+  class etcd_operator {
+    +namespace: string
+    +clusterName: string
+    +size: int
+    +version: string
+    +CreateCluster()
+    +UpdateCluster()
+    +DeleteCluster()
+    +BackupCluster()
+    +RestoreCluster()
+  }
+  
+  class helm_chart {
+    +chartName: string
+    +values: map[string]interface{}
+    +Install()
+    +Upgrade()
+    +Uninstall()
+    +Template()
+  }
+  
+  class ansible_playbook {
+    +inventory: string
+    +playbook: string
+    +variables: map[string]string
+    +Deploy()
+    +Configure()
+    +Maintain()
+  }
+}
+
+' 工具关系连接
+etcdctl --> etcd : 管理和操作
+etcdutl --> etcd : 维护和修复
+benchmark --> etcd : 性能测试
+
+etcd_dump_db --> etcd : 数据导出
+etcd_dump_logs --> etcd : 日志分析
+etcd_dump_metrics --> etcd : 指标导出
+
+local_tester --> Agent : 管理测试代理
+Agent --> etcd : 控制 etcd 实例
+local_tester --> FailureCase : 执行故障案例
+
+prometheus_exporter --> etcd : 收集指标
+grafana_dashboard --> prometheus_exporter : 可视化指标
+alertmanager_rules --> prometheus_exporter : 告警规则
+
+etcd_operator --> etcd : Kubernetes 部署
+helm_chart --> etcd : Helm 部署
+ansible_playbook --> etcd : Ansible 部署
+
+benchmark --> BenchmarkResult : 生成结果
+
+' 工具使用流程
+participant "开发者\nDeveloper" as D
+participant "etcdctl" as CTL
+participant "benchmark" as BENCH
+participant "etcdutl" as UTL
+participant "etcd 集群\nEtcd Cluster" as CLUSTER
+
+== 日常操作流程 Daily Operations ==
+D -> CTL : 键值操作\nKV Operations
+CTL -> CLUSTER : gRPC 调用\ngRPC Calls
+CLUSTER -> CTL : 响应\nResponse
+CTL -> D : 结果显示\nDisplay Results
+
+== 性能测试流程 Performance Testing ==
+D -> BENCH : 启动基准测试\nStart Benchmark
+BENCH -> CLUSTER : 并发请求\nConcurrent Requests
+CLUSTER -> BENCH : 响应统计\nResponse Stats
+BENCH -> D : 性能报告\nPerformance Report
+
+== 维护操作流程 Maintenance Operations ==
+D -> UTL : 快照备份\nSnapshot Backup
+UTL -> CLUSTER : 创建快照\nCreate Snapshot
+CLUSTER -> UTL : 快照数据\nSnapshot Data
+UTL -> D : 备份完成\nBackup Complete
+
+D -> UTL : 数据恢复\nData Restore
+UTL -> UTL : 恢复快照\nRestore Snapshot
+UTL -> CLUSTER : 启动新集群\nStart New Cluster
+
+note right of etcdctl
+  主要客户端工具
+  - 键值操作
+  - 集群管理
+  - 认证配置
+  - 监听和事务
+end note
+
+note right of benchmark
+  性能测试工具
+  - 吞吐量测试
+  - 延迟测试
+  - 并发测试
+  - 压力测试
+end note
+
+note right of etcdutl
+  数据库工具
+  - 快照管理
+  - 数据迁移
+  - 碎片整理
+  - 一致性检查
+end note
+
+note right of local_tester
+  本地测试框架
+  - 故障注入
+  - 一致性验证
+  - 自动化测试
+  - 回归测试
+end note
+
+@enduml

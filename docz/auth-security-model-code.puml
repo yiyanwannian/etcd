@@ -1,0 +1,371 @@
+@startuml auth-security-model-code
+!theme plain
+title etcd 认证安全模型 - 代码实现位置
+
+package "认证存储 Auth Store" {
+  interface AuthStore {
+    +AuthEnable(): error
+    +AuthDisable(): error
+    +IsAuthEnabled(): bool
+    +Authenticate(): (*pb.AuthenticateResponse, error)
+    +UserAdd(): (*pb.AuthUserAddResponse, error)
+    +UserDelete(): (*pb.AuthUserDeleteResponse, error)
+    +UserChangePassword(): (*pb.AuthUserChangePasswordResponse, error)
+    +UserGrantRole(): (*pb.AuthUserGrantRoleResponse, error)
+    +UserGet(): (*pb.AuthUserGetResponse, error)
+    +UserRevokeRole(): (*pb.AuthUserRevokeRoleResponse, error)
+    +UserList(): (*pb.AuthUserListResponse, error)
+    +RoleAdd(): (*pb.AuthRoleAddResponse, error)
+    +RoleGrantPermission(): (*pb.AuthRoleGrantPermissionResponse, error)
+    +RoleGet(): (*pb.AuthRoleGetResponse, error)
+    +RoleRevokePermission(): (*pb.AuthRoleRevokePermissionResponse, error)
+    +RoleDelete(): (*pb.AuthRoleDeleteResponse, error)
+    +RoleList(): (*pb.AuthRoleListResponse, error)
+    +IsAdminPermitted(): error
+    +IsMemberAllowed(): error
+    +IsRangePermitted(): error
+    +IsPutPermitted(): error
+    +IsDeleteRangePermitted(): error
+    --
+    📁 server/auth/store.go:AuthStore
+    📁 server/auth/store.go:(*authStore).AuthEnable()
+    📁 server/auth/store.go:(*authStore).Authenticate()
+    📁 server/auth/store.go:(*authStore).UserAdd()
+    📁 server/auth/store.go:(*authStore).RoleAdd()
+    📁 server/auth/store.go:(*authStore).IsRangePermitted()
+  }
+  
+  class authStore {
+    +be: backend.Backend
+    +enabled: bool
+    +enabledMu: sync.RWMutex
+    +rangePermCache: map[string]*unifiedRangePermissions
+    +tokenProvider: TokenProvider
+    +bcryptCost: int
+    +lg: *zap.Logger
+    --
+    📁 server/auth/store.go:authStore
+    📁 server/auth/store.go:NewAuthStore()
+    📁 server/auth/store.go:(*authStore).AuthEnable()
+    📁 server/auth/store.go:(*authStore).AuthDisable()
+    📁 server/auth/store.go:(*authStore).Authenticate()
+    📁 server/auth/store.go:(*authStore).getUser()
+    📁 server/auth/store.go:(*authStore).getRole()
+  }
+}
+
+package "用户管理 User Management" {
+  class User {
+    +Name: []byte
+    +Password: []byte
+    +Roles: []string
+    +Options: *UserAddOptions
+    --
+    📁 api/authpb/auth.proto:User
+    📁 server/auth/store.go:(*authStore).UserAdd()
+    📁 server/auth/store.go:(*authStore).UserDelete()
+    📁 server/auth/store.go:(*authStore).UserChangePassword()
+    📁 server/auth/store.go:(*authStore).UserGrantRole()
+  }
+  
+  class UserAddOptions {
+    +NoPassword: bool
+    --
+    📁 api/authpb/auth.proto:UserAddOptions
+  }
+}
+
+package "角色管理 Role Management" {
+  class Role {
+    +Name: []byte
+    +KeyPermission: []*authpb.Permission
+    --
+    📁 api/authpb/auth.proto:Role
+    📁 server/auth/store.go:(*authStore).RoleAdd()
+    📁 server/auth/store.go:(*authStore).RoleDelete()
+    📁 server/auth/store.go:(*authStore).RoleGrantPermission()
+    📁 server/auth/store.go:(*authStore).RoleRevokePermission()
+  }
+  
+  class Permission {
+    +PermType: Permission_Type
+    +Key: []byte
+    +RangeEnd: []byte
+    --
+    📁 api/authpb/auth.proto:Permission
+    📁 server/auth/store.go:checkKeyPermission()
+    📁 server/auth/store.go:checkRangePermission()
+  }
+  
+  enum Permission_Type {
+    READ
+    WRITE
+    READWRITE
+    --
+    📁 api/authpb/auth.proto:Permission_Type
+  }
+}
+
+package "令牌管理 Token Management" {
+  interface TokenProvider {
+    +assign(): (string, error)
+    +info(): (*AuthInfo, bool)
+    +enable()
+    +disable()
+    +invalidateUser()
+    +genTokenPrefix(): (string, error)
+    --
+    📁 server/auth/store.go:TokenProvider
+    📁 server/auth/simple_token.go:(*simpleTokenTTLKeeper).assign()
+    📁 server/auth/jwt.go:(*jwtTokenProvider).assign()
+  }
+  
+  class simpleTokenTTLKeeper {
+    +tokens: map[string]time.Time
+    +donec: chan struct{}
+    +stopc: chan struct{}
+    +deleteTokenFunc: func(string)
+    +mu: *sync.RWMutex
+    +addSimpleToken()
+    +resetSimpleToken()
+    +deleteSimpleToken()
+    --
+    📁 server/auth/simple_token.go:simpleTokenTTLKeeper
+    📁 server/auth/simple_token.go:newSimpleTokenTTLKeeper()
+    📁 server/auth/simple_token.go:(*simpleTokenTTLKeeper).assign()
+    📁 server/auth/simple_token.go:(*simpleTokenTTLKeeper).info()
+    📁 server/auth/simple_token.go:(*simpleTokenTTLKeeper).run()
+  }
+  
+  class jwtTokenProvider {
+    +signingMethod: jwt.SigningMethod
+    +key: interface{}
+    +ttl: time.Duration
+    +verifyOnly: bool
+    --
+    📁 server/auth/jwt.go:jwtTokenProvider
+    📁 server/auth/jwt.go:newJWTTokenProvider()
+    📁 server/auth/jwt.go:(*jwtTokenProvider).assign()
+    📁 server/auth/jwt.go:(*jwtTokenProvider).info()
+    📁 github.com/golang-jwt/jwt/v4
+  }
+  
+  class AuthInfo {
+    +Username: string
+    +Roles: []string
+    +Revision: uint64
+    --
+    📁 server/auth/store.go:AuthInfo
+  }
+}
+
+package "权限缓存 Permission Cache" {
+  class unifiedRangePermissions {
+    +readPerms: adt.IntervalTree
+    +writePerms: adt.IntervalTree
+    --
+    📁 server/auth/range_perm_cache.go:unifiedRangePermissions
+    📁 server/auth/range_perm_cache.go:(*unifiedRangePermissions).add()
+    📁 server/auth/range_perm_cache.go:(*unifiedRangePermissions).check()
+  }
+  
+  class adt.IntervalTree {
+    +Insert()
+    +Delete()
+    +Query()
+    +Len()
+    --
+    📁 github.com/google/btree
+    📁 server/auth/range_perm_cache.go:newIntervalPermission()
+  }
+}
+
+package "TLS 安全 TLS Security" {
+  class TLSInfo {
+    +CertFile: string
+    +KeyFile: string
+    +TrustedCAFile: string
+    +ClientCertAuth: bool
+    +CRLFile: string
+    +InsecureSkipVerify: bool
+    +ServerName: string
+    +CipherSuites: []uint16
+    +AllowedCN: string
+    +AllowedHostname: string
+    +Logger: *zap.Logger
+    +EmptyCN: bool
+    --
+    📁 pkg/transport/listener.go:TLSInfo
+    📁 pkg/transport/listener.go:(*TLSInfo).ClientConfig()
+    📁 pkg/transport/listener.go:(*TLSInfo).ServerConfig()
+    📁 pkg/transport/listener.go:(*TLSInfo).baseConfig()
+  }
+}
+
+' 关系连接
+authStore --> AuthStore : 实现\n📁 server/auth/store.go
+authStore --> User : 管理用户\n📁 server/auth/store.go
+authStore --> Role : 管理角色\n📁 server/auth/store.go
+authStore --> TokenProvider : 令牌提供者\n📁 server/auth/store.go
+authStore --> unifiedRangePermissions : 权限缓存\n📁 server/auth/range_perm_cache.go
+
+Role --> Permission : 包含权限\n📁 api/authpb/auth.proto
+Permission --> Permission_Type : 权限类型\n📁 api/authpb/auth.proto
+
+TokenProvider --> simpleTokenTTLKeeper : Simple Token 实现\n📁 server/auth/simple_token.go
+TokenProvider --> jwtTokenProvider : JWT Token 实现\n📁 server/auth/jwt.go
+TokenProvider --> AuthInfo : 生成认证信息\n📁 server/auth/store.go
+
+unifiedRangePermissions --> adt.IntervalTree : 区间树存储\n📁 server/auth/range_perm_cache.go
+
+note right of authStore
+  认证存储核心实现:
+  📁 server/auth/store.go
+  
+  关键方法:
+  - NewAuthStore(): 创建认证存储
+  - AuthEnable(): 启用认证
+  - Authenticate(): 用户认证
+  - UserAdd(): 添加用户
+  - RoleAdd(): 添加角色
+  - IsRangePermitted(): 权限检查
+  
+  存储桶:
+  - authUsersBucketName: 用户存储
+  - authRolesBucketName: 角色存储
+  - authRevisionBucketName: 版本存储
+end note
+
+note right of simpleTokenTTLKeeper
+  简单令牌管理实现:
+  📁 server/auth/simple_token.go
+  
+  核心功能:
+  - assign(): 分配令牌
+  - info(): 获取令牌信息
+  - run(): TTL 清理循环
+  - addSimpleToken(): 添加令牌
+  - resetSimpleToken(): 重置令牌
+  
+  特点:
+  - 内存存储
+  - TTL 过期管理
+  - 定时清理
+  - 快速验证
+end note
+
+note right of jwtTokenProvider
+  JWT 令牌管理实现:
+  📁 server/auth/jwt.go
+  
+  依赖库:
+  📁 github.com/golang-jwt/jwt/v4
+  
+  核心功能:
+  - assign(): 生成 JWT 令牌
+  - info(): 验证 JWT 令牌
+  - parseWithClaims(): 解析声明
+  
+  特点:
+  - 数字签名验证
+  - 无状态设计
+  - 标准兼容
+  - 安全可靠
+end note
+
+note right of unifiedRangePermissions
+  权限缓存优化实现:
+  📁 server/auth/range_perm_cache.go
+  
+  核心功能:
+  - add(): 添加权限范围
+  - check(): 检查权限
+  - getMergedPerms(): 合并权限
+  
+  数据结构:
+  - IntervalTree: 区间树存储
+  - 支持范围权限查询
+  - 内存高效
+  - 快速查找
+end note
+
+' RBAC 关系图
+package "RBAC 模型实现 RBAC Model Implementation" {
+  class "用户存储 User Storage" as UserStorage {
+    --
+    📁 server/auth/store.go:getUser()
+    📁 server/auth/store.go:putUser()
+    📁 server/auth/store.go:delUser()
+    
+    存储桶: authUsersBucketName
+    键格式: username
+    值格式: User protobuf
+  }
+  
+  class "角色存储 Role Storage" as RoleStorage {
+    --
+    📁 server/auth/store.go:getRole()
+    📁 server/auth/store.go:putRole()
+    📁 server/auth/store.go:delRole()
+    
+    存储桶: authRolesBucketName
+    键格式: rolename
+    值格式: Role protobuf
+  }
+  
+  class "权限检查 Permission Check" as PermCheck {
+    --
+    📁 server/auth/store.go:IsRangePermitted()
+    📁 server/auth/store.go:IsPutPermitted()
+    📁 server/auth/store.go:IsDeleteRangePermitted()
+    
+    检查流程:
+    1. 获取用户角色
+    2. 遍历角色权限
+    3. 匹配键范围
+    4. 返回检查结果
+  }
+}
+
+UserStorage ||--o{ RoleStorage : 用户分配角色\n📁 server/auth/store.go
+RoleStorage ||--o{ PermCheck : 角色包含权限\n📁 server/auth/store.go
+
+note right of TLSInfo
+  TLS 安全配置实现:
+  📁 pkg/transport/listener.go
+  
+  核心功能:
+  - ClientConfig(): 客户端 TLS 配置
+  - ServerConfig(): 服务端 TLS 配置
+  - baseConfig(): 基础 TLS 配置
+  - NewListener(): 创建 TLS 监听器
+  
+  安全特性:
+  - 双向认证
+  - 证书验证
+  - 加密通信
+  - 访问控制
+end note
+
+note as N1
+  认证系统初始化流程:
+  
+  1. server/etcdserver/server.go:NewServer()
+     ↓
+  2. server/auth/store.go:NewAuthStore()
+     ↓
+  3. server/auth/simple_token.go:newSimpleTokenTTLKeeper()
+     或 server/auth/jwt.go:newJWTTokenProvider()
+     ↓
+  4. server/auth/range_perm_cache.go:newUnifiedRangePermissions()
+  
+  API 集成:
+  📁 server/etcdserver/api/v3rpc/auth.go
+  📁 server/etcdserver/api/v3rpc/interceptor.go
+  
+  权限检查拦截器:
+  - authUnaryInterceptor(): 一元 RPC 拦截
+  - authStreamInterceptor(): 流式 RPC 拦截
+end note
+
+@enduml

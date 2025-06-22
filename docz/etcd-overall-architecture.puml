@@ -1,0 +1,79 @@
+@startuml etcd-overall-architecture
+!theme plain
+title etcd 整体架构图
+
+package "客户端层 Client Layer" {
+  [etcdctl 命令行工具] as CLI
+  [Client SDK] as SDK
+  [HTTP 客户端] as HTTP
+}
+
+package "API 网关层 API Gateway" {
+  [gRPC 服务器] as GRPC
+  [REST 网关] as REST
+  [认证模块] as AUTH
+}
+
+package "核心服务层 Core Service" {
+  [EtcdServer 主服务] as ETCD
+  [Raft 一致性引擎] as RAFT
+  [Apply 应用模块] as APPLY
+  [集群管理器] as CLUSTER
+}
+
+package "存储层 Storage Layer" {
+  [MVCC 引擎] as MVCC
+  [Backend 后端存储] as BACKEND
+  [WAL 预写日志] as WAL
+  [Snapshot 快照] as SNAP
+}
+
+package "基础设施层 Infrastructure" {
+  [Lease 租约管理] as LEASE
+  [Watch 监听系统] as WATCH
+  [Auth 权限系统] as AUTHSYS
+}
+
+' 客户端到API层的连接
+CLI --> GRPC : gRPC 调用
+SDK --> GRPC : gRPC 调用
+HTTP --> REST : HTTP 请求
+REST --> GRPC : 转换为 gRPC
+
+' API层到核心层的连接
+GRPC --> AUTH : 认证检查
+AUTH --> ETCD : 转发请求
+ETCD --> RAFT : 一致性处理
+ETCD --> APPLY : 应用操作
+ETCD --> CLUSTER : 集群管理
+
+' 核心层到存储层的连接
+RAFT --> WAL : 日志写入
+APPLY --> MVCC : 状态更新
+MVCC --> BACKEND : 数据持久化
+RAFT --> SNAP : 快照创建
+
+' 基础设施连接
+ETCD --> LEASE : 租约管理
+ETCD --> WATCH : 事件监听
+ETCD --> AUTHSYS : 权限验证
+
+note right of RAFT
+  基于 Raft 算法实现
+  分布式一致性保证
+  领导者选举和日志复制
+end note
+
+note right of MVCC
+  多版本并发控制
+  支持历史版本查询
+  事务隔离保证
+end note
+
+note right of BACKEND
+  基于 BoltDB 实现
+  B+ 树索引结构
+  ACID 事务支持
+end note
+
+@enduml

@@ -1,0 +1,164 @@
+@startuml lease-lifecycle-sequence
+!theme plain
+title etcd 租约生命周期时序图
+
+participant "客户端\nClient" as C
+participant "租约管理器\nLessor" as L
+participant "租约队列\nLeaseQueue" as Q
+participant "后端存储\nBackend" as B
+participant "MVCC 存储\nMVCC Store" as M
+
+== 租约创建 Lease Grant ==
+C -> L : Grant(TTL=60)
+activate L
+note right of L : 验证 TTL 参数\n生成唯一租约 ID
+L -> L : 生成租约ID\nGenerate Lease ID
+L -> L : 创建租约对象\nCreate Lease Object
+note right of L : 设置过期时间\nexpiryTime = now + TTL
+L -> B : 持久化租约\nPersist Lease
+activate B
+B -> B : 写入租约数据\nWrite Lease Data
+B --> L : 持久化完成\nPersistence Complete
+deactivate B
+L -> Q : 添加到过期队列\nAdd to Expiry Queue
+activate Q
+Q -> Q : 插入最小堆\nInsert into Min Heap
+Q --> L : 队列更新完成\nQueue Updated
+deactivate Q
+L -> C : 返回租约响应\nReturn Lease Response\n{ID: 123, TTL: 60}
+deactivate L
+
+== 键值关联 Key Association ==
+C -> L : Put(key="foo", value="bar", lease=123)
+activate L
+L -> M : 存储键值对\nStore Key-Value
+activate M
+M -> M : 关联租约ID\nAssociate Lease ID
+M --> L : 存储完成\nStorage Complete
+deactivate M
+L -> L : 更新租约项目集合\nUpdate Lease ItemSet
+note right of L : itemSet["foo"] = struct{}{}
+L -> C : Put 响应\nPut Response
+deactivate L
+
+== 租约续期 Lease Renewal ==
+C -> L : KeepAlive(LeaseID=123)
+activate L
+L -> L : 查找租约\nFind Lease
+alt 租约存在 Lease Exists
+    L -> L : 重置过期时间\nReset Expiry Time
+    note right of L : expiryTime = now + TTL
+    L -> Q : 更新队列位置\nUpdate Queue Position
+    activate Q
+    Q -> Q : 重新排序堆\nReheapify
+    Q --> L : 位置更新完成\nPosition Updated
+    deactivate Q
+    L -> C : 返回剩余TTL\nReturn Remaining TTL\n{TTL: 60}
+else 租约不存在 Lease Not Found
+    L -> C : 错误响应\nError Response\n{Error: "lease not found"}
+end
+deactivate L
+
+== 租约过期检查 Lease Expiry Check ==
+loop 定期检查 Periodic Check
+    Q -> Q : 检查队列头部\nCheck Queue Head
+    alt 有过期租约 Has Expired Lease
+        Q -> L : 过期通知\nExpiry Notification\n{LeaseID: 123}
+        activate L
+        L -> L : 标记租约过期\nMark Lease Expired
+        L -> L : 获取关联键列表\nGet Associated Keys
+        note right of L : keys = ["foo"]
+        
+        loop 删除关联键 Delete Associated Keys
+            L -> M : 删除键\nDelete Key("foo")
+            activate M
+            M -> M : 移除键值对\nRemove Key-Value
+            M --> L : 删除完成\nDeletion Complete
+            deactivate M
+        end
+        
+        L -> B : 删除租约记录\nDelete Lease Record
+        activate B
+        B -> B : 移除租约数据\nRemove Lease Data
+        B --> L : 删除完成\nDeletion Complete
+        deactivate B
+        
+        L -> Q : 从队列移除\nRemove from Queue
+        activate Q
+        Q -> Q : 移除堆元素\nRemove Heap Element
+        Q --> L : 移除完成\nRemoval Complete
+        deactivate Q
+        
+        L -> L : 清理租约对象\nCleanup Lease Object
+        deactivate L
+    else 无过期租约 No Expired Lease
+        Q -> Q : 等待下次检查\nWait for Next Check
+    end
+end
+
+== 手动撤销 Manual Revocation ==
+C -> L : Revoke(LeaseID=123)
+activate L
+L -> L : 查找租约\nFind Lease
+alt 租约存在 Lease Exists
+    L -> L : 获取关联键\nGet Associated Keys
+    
+    loop 删除关联键 Delete Associated Keys
+        L -> M : 删除键\nDelete Key
+        activate M
+        M --> L : 删除完成\nDeletion Complete
+        deactivate M
+    end
+    
+    L -> B : 删除租约记录\nDelete Lease Record
+    activate B
+    B --> L : 删除完成\nDeletion Complete
+    deactivate B
+    
+    L -> Q : 从队列移除\nRemove from Queue
+    activate Q
+    Q --> L : 移除完成\nRemoval Complete
+    deactivate Q
+    
+    L -> C : 撤销成功响应\nRevoke Success Response
+else 租约不存在 Lease Not Found
+    L -> C : 错误响应\nError Response
+end
+deactivate L
+
+== 检查点创建 Checkpoint Creation ==
+note over L : 定期创建检查点\nPeriodic Checkpoint
+L -> L : 收集租约状态\nCollect Lease States
+L -> B : 保存检查点\nSave Checkpoint
+activate B
+B -> B : 写入检查点数据\nWrite Checkpoint Data
+note right of B : 包含租约ID和剩余TTL\nContains Lease ID and Remaining TTL
+B --> L : 检查点保存完成\nCheckpoint Saved
+deactivate B
+
+note right of L
+  租约管理器核心功能:
+  - 租约生命周期管理
+  - 过期检测和处理
+  - 键值关联管理
+  - 检查点机制
+  - 故障恢复支持
+end note
+
+note right of Q
+  租约队列特点:
+  - 最小堆实现
+  - 按过期时间排序
+  - 高效的插入删除
+  - 支持动态更新
+end note
+
+note right of B
+  后端存储职责:
+  - 租约数据持久化
+  - 检查点数据保存
+  - 故障恢复数据
+  - 事务一致性保证
+end note
+
+@enduml

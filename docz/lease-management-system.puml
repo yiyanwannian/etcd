@@ -1,0 +1,220 @@
+@startuml lease-management-system
+!theme plain
+title etcd 租约管理系统
+
+package "租约管理器 Lessor" {
+  interface Lessor {
+    +SetRangeDeleter()
+    +SetCheckpointer()
+    +Grant(): (*Lease, error)
+    +Revoke(): error
+    +Checkpoint(): error
+    +Attach(): error
+    +GetLease(): *Lease
+    +Detach(): error
+    +Promote()
+    +Demote()
+    +Renew(): (int64, error)
+    +Lookup(): *Lease
+    +Leases(): []*Lease
+    +ExpiredLeasesC(): <-chan []*Lease
+    +Recover(): error
+    +Stop()
+  }
+  
+  class lessor {
+    +mu: sync.RWMutex
+    +leaseMap: map[LeaseID]*Lease
+    +leaseExpiredNotifier: *LeaseExpiredNotifier
+    +leaseCheckpointHeap: LeaseQueue
+    +b: backend.Backend
+    +minLeaseTTL: int64
+    +expiredC: chan []*Lease
+    +stopC: chan struct{}
+    +doneC: chan struct{}
+    +lg: *zap.Logger
+    +cp: Checkpointer
+    +rd: RangeDeleter
+    +primary: bool
+  }
+}
+
+package "租约对象 Lease Object" {
+  class Lease {
+    +ID: LeaseID
+    +ttl: int64
+    +remainingTTL: int64
+    +expiryTime: time.Time
+    +itemSet: map[LeaseItem]struct{}
+    +revokec: chan struct{}
+    +mu: sync.RWMutex
+    +expired: bool
+  }
+  
+  class LeaseItem {
+    +Key: string
+  }
+  
+  class LeaseID {
+    +int64
+  }
+}
+
+package "租约队列 Lease Queue" {
+  interface LeaseQueue {
+    +RegisterOrUpdate(): 
+    +Unregister(): *LeaseWithTime
+    +Poll(): *LeaseWithTime
+    +Len(): int
+  }
+  
+  class leaseQueue {
+    +array: []*LeaseWithTime
+    +idxMap: map[LeaseID]int
+    +heapifyUp()
+    +heapifyDown()
+    +swap()
+  }
+  
+  class LeaseWithTime {
+    +id: LeaseID
+    +time: int64
+  }
+  
+  class LeaseExpiredNotifier {
+    +m: map[LeaseID]*LeaseWithTime
+    +queue: LeaseQueue
+    +mu: sync.Mutex
+  }
+}
+
+package "检查点机制 Checkpoint" {
+  interface Checkpointer {
+    +Checkpoint(): error
+    +CheckpointBatch(): error
+  }
+  
+  class LeaseCheckpoint {
+    +ID: LeaseID
+    +RemainingTTL: int64
+  }
+  
+  class checkpointer {
+    +lg: *zap.Logger
+    +backend: backend.Backend
+    +cp: func(LeaseCheckpoint) error
+  }
+}
+
+package "范围删除器 Range Deleter" {
+  interface RangeDeleter {
+    +TxnDeleteRange(): (*pb.DeleteRangeResponse, error)
+  }
+  
+  class rangeDeleter {
+    +store: mvcc.KV
+    +lg: *zap.Logger
+  }
+}
+
+package "租约持久化 Lease Persistence" {
+  class leasepb.Lease {
+    +ID: int64
+    +TTL: int64
+  }
+  
+  class leasepb.LeaseCheckpoint {
+    +ID: int64
+    +RemainingTTL: int64
+  }
+}
+
+' 关系连接
+lessor --> Lessor : 实现
+lessor --> Lease : 管理租约
+lessor --> LeaseExpiredNotifier : 过期通知
+lessor --> Checkpointer : 检查点
+lessor --> RangeDeleter : 范围删除
+
+Lease --> LeaseItem : 包含项目
+Lease --> LeaseID : 租约标识
+
+leaseQueue --> LeaseQueue : 实现
+leaseQueue --> LeaseWithTime : 队列元素
+LeaseExpiredNotifier --> leaseQueue : 使用队列
+
+checkpointer --> Checkpointer : 实现
+checkpointer --> LeaseCheckpoint : 检查点数据
+
+rangeDeleter --> RangeDeleter : 实现
+
+lessor --> leasepb.Lease : 持久化
+lessor --> leasepb.LeaseCheckpoint : 检查点持久化
+
+' 租约生命周期序列图
+participant "客户端\nClient" as C
+participant "租约管理器\nLessor" as L
+participant "租约队列\nLeaseQueue" as Q
+participant "后端存储\nBackend" as B
+
+== 租约创建 Lease Grant ==
+C -> L : Grant(TTL)
+activate L
+L -> L : 生成租约ID\nGenerate Lease ID
+L -> L : 创建租约对象\nCreate Lease Object
+L -> B : 持久化租约\nPersist Lease
+L -> Q : 添加到过期队列\nAdd to Expiry Queue
+L -> C : 返回租约ID\nReturn Lease ID
+deactivate L
+
+== 租约续期 Lease Renewal ==
+C -> L : KeepAlive(LeaseID)
+activate L
+L -> L : 查找租约\nFind Lease
+L -> L : 更新过期时间\nUpdate Expiry Time
+L -> Q : 更新队列位置\nUpdate Queue Position
+L -> C : 返回剩余TTL\nReturn Remaining TTL
+deactivate L
+
+== 租约过期 Lease Expiration ==
+Q -> L : 过期通知\nExpiry Notification
+activate L
+L -> L : 标记租约过期\nMark Lease Expired
+L -> L : 删除关联键\nDelete Associated Keys
+L -> B : 删除租约记录\nDelete Lease Record
+L -> Q : 从队列移除\nRemove from Queue
+deactivate L
+
+note right of lessor
+  租约管理器核心
+  - 租约生命周期管理
+  - 过期检测和处理
+  - 检查点机制
+  - 键值关联管理
+end note
+
+note right of leaseQueue
+  最小堆实现
+  - 按过期时间排序
+  - O(log n) 插入删除
+  - O(1) 获取最早过期
+  - 支持动态更新
+end note
+
+note right of LeaseExpiredNotifier
+  过期通知器
+  - 定时检查过期租约
+  - 批量处理过期事件
+  - 高效的时间管理
+  - 内存优化设计
+end note
+
+note right of checkpointer
+  检查点机制
+  - 定期保存租约状态
+  - 故障恢复支持
+  - 批量处理优化
+  - 数据一致性保证
+end note
+
+@enduml

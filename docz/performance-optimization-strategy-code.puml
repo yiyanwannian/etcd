@@ -1,0 +1,378 @@
+@startuml performance-optimization-strategy-code
+!theme plain
+title etcd 性能优化策略 - 代码实现位置
+
+package "硬件优化 Hardware Optimization" {
+  class StorageOptimization {
+    +diskType: string
+    +iops: int
+    +throughput: int
+    +latency: time.Duration
+    +UseSSD()
+    +SeparateWAL()
+    +OptimizeFileSystem()
+    +ConfigureIOScheduler()
+    --
+    📁 server/embed/config.go
+    📁 server/etcdmain/config.go
+    📁 server/storage/backend/backend.go
+    📁 server/storage/wal/wal.go
+  }
+  
+  class MemoryOptimization {
+    +totalMemory: int64
+    +cacheSize: int64
+    +bufferSize: int64
+    +CalculateRequirement()
+    +ConfigureCache()
+    +OptimizeGC()
+    --
+    📁 server/embed/config.go
+    📁 server/storage/backend/backend.go
+    📁 server/storage/mvcc/kvstore.go
+    📁 runtime/debug.SetGCPercent()
+  }
+  
+  class NetworkOptimization {
+    +bandwidth: int64
+    +latency: time.Duration
+    +packetLoss: float64
+    +OptimizeTCP()
+    +ConfigureBuffers()
+    +ReduceLatency()
+    --
+    📁 server/embed/config.go
+    📁 server/etcdserver/api/rafthttp/transport.go
+    📁 client/v3/config.go
+    📁 google.golang.org/grpc
+  }
+  
+  class CPUOptimization {
+    +cores: int
+    +frequency: float64
+    +architecture: string
+    +OptimizeScheduling()
+    +ReduceContextSwitch()
+    +ConfigureAffinity()
+    --
+    📁 server/etcdmain/main.go
+    📁 runtime.GOMAXPROCS()
+    📁 runtime.LockOSThread()
+    📁 syscall.SYS_SCHED_SETAFFINITY
+  }
+}
+
+package "软件配置优化 Software Configuration" {
+  class EtcdConfiguration {
+    +heartbeatInterval: time.Duration
+    +electionTimeout: time.Duration
+    +snapshotCount: int64
+    +maxSnapshots: int
+    +maxWals: int
+    +quotaBackendBytes: int64
+    +autoCompactionMode: string
+    +autoCompactionRetention: string
+    +backendBatchLimit: int
+    +backendBatchInterval: time.Duration
+    +OptimizeRaft()
+    +OptimizeStorage()
+    +OptimizeCompaction()
+    --
+    📁 server/embed/config.go:Config
+    📁 server/etcdserver/config.go:ServerConfig
+    📁 raft/raft.go:Config
+    📁 server/storage/backend/config.go
+    📁 server/etcdserver/server.go:NewServer()
+  }
+  
+  class OSOptimization {
+    +fileDescriptorLimit: int
+    +swappiness: int
+    +dirtyRatio: int
+    +ioScheduler: string
+    +ConfigureKernel()
+    +OptimizeFileSystem()
+    +ConfigureLimits()
+    --
+    📁 pkg/fileutil/fileutil.go
+    📁 server/etcdmain/main.go
+    📁 /etc/security/limits.conf
+    📁 /proc/sys/vm/swappiness
+    📁 /sys/block/*/queue/scheduler
+  }
+  
+  class GRPCOptimization {
+    +maxSendMsgSize: int
+    +maxRecvMsgSize: int
+    +keepAliveTime: time.Duration
+    +keepAliveTimeout: time.Duration
+    +maxConcurrentStreams: int
+    +OptimizeConnection()
+    +ConfigureKeepAlive()
+    +OptimizeStreaming()
+    --
+    📁 server/embed/config.go:Config.GRPCKeepAlive*
+    📁 server/etcdserver/api/v3rpc/grpc.go
+    📁 client/v3/config.go:Config.DialKeepAlive*
+    📁 google.golang.org/grpc/keepalive
+  }
+}
+
+package "应用层优化 Application Optimization" {
+  class ClientOptimization {
+    +connectionPool: int
+    +batchSize: int
+    +timeout: time.Duration
+    +retryPolicy: RetryPolicy
+    +OptimizeConnection()
+    +BatchOperations()
+    +AsyncProcessing()
+    +CacheResults()
+    --
+    📁 client/v3/client.go:Client
+    📁 client/v3/config.go:Config
+    📁 client/v3/retry.go
+    📁 client/v3/txn.go:Txn
+    📁 client/v3/concurrency/
+  }
+  
+  class DataModelOptimization {
+    +keyDesign: string
+    +valueSize: int
+    +keyPrefix: string
+    +OptimizeKeyStructure()
+    +ControlValueSize()
+    +UsePrefix()
+    +AvoidHotKeys()
+    --
+    📁 server/etcdserver/api/v3rpc/key.go
+    📁 server/storage/mvcc/kvstore.go
+    📁 server/storage/mvcc/index.go
+    📁 api/etcdserverpb/rpc.proto
+  }
+  
+  class TransactionOptimization {
+    +batchSize: int
+    +conflictDetection: bool
+    +isolationLevel: string
+    +BatchTransactions()
+    +ReduceConflicts()
+    +OptimizeConditions()
+    --
+    📁 server/storage/mvcc/kvstore_txn.go
+    📁 server/etcdserver/apply/apply.go
+    📁 client/v3/txn.go
+    📁 api/etcdserverpb/rpc.proto:TxnRequest
+  }
+}
+
+package "集群架构优化 Cluster Architecture" {
+  class ClusterSizing {
+    +nodeCount: int
+    +faultTolerance: int
+    +loadDistribution: string
+    +CalculateOptimalSize()
+    +BalanceLoad()
+    +PlanCapacity()
+    --
+    📁 server/etcdserver/api/membership/cluster.go
+    📁 server/embed/config.go:Config.InitialCluster
+    📁 raft/raft.go:quorum()
+    📁 server/etcdserver/server.go
+  }
+  
+  class TopologyOptimization {
+    +datacenterDistribution: map[string]int
+    +networkTopology: string
+    +latencyMatrix: [][]time.Duration
+    +OptimizeDistribution()
+    +ReduceNetworkHops()
+    +ConfigureAffinity()
+    --
+    📁 server/embed/config.go:Config.InitialCluster
+    📁 server/etcdserver/api/rafthttp/transport.go
+    📁 client/v3/naming/resolver.go
+    📁 client/v3/balancer/
+  }
+  
+  class LoadBalancing {
+    +strategy: string
+    +healthCheck: bool
+    +failoverTime: time.Duration
+    +ConfigureBalancer()
+    +ImplementHealthCheck()
+    +OptimizeFailover()
+    --
+    📁 client/v3/balancer/balancer.go
+    📁 client/v3/balancer/picker/
+    📁 client/v3/balancer/resolver/
+    📁 server/etcdserver/api/v3rpc/health.go
+  }
+}
+
+package "监控和调优 Monitoring and Tuning" {
+  class MetricsCollection {
+    +latencyMetrics: []Metric
+    +throughputMetrics: []Metric
+    +resourceMetrics: []Metric
+    +CollectMetrics()
+    +AnalyzePerformance()
+    +GenerateReports()
+    --
+    📁 server/etcdserver/api/v3rpc/metrics.go
+    📁 server/storage/mvcc/metrics.go
+    📁 server/lease/metrics.go
+    📁 raft/node.go:Status()
+    📁 github.com/prometheus/client_golang
+  }
+  
+  class PerformanceAnalysis {
+    +bottleneckAnalysis: BottleneckAnalysis
+    +trendAnalysis: TrendAnalysis
+    +capacityPlanning: CapacityPlanning
+    +IdentifyBottlenecks()
+    +PredictTrends()
+    +PlanCapacity()
+    --
+    📁 server/etcdserver/api/v3rpc/maintenance.go
+    📁 tools/benchmark/
+    📁 server/etcdserver/server.go:monitorFileDescriptor()
+    📁 server/storage/backend/metrics.go
+  }
+  
+  class AutoTuning {
+    +parameters: map[string]interface{}
+    +rules: []TuningRule
+    +feedback: FeedbackLoop
+    +AutoAdjust()
+    +ApplyRules()
+    +LearnFromFeedback()
+    --
+    📁 server/storage/mvcc/kvstore.go:Compact()
+    📁 server/etcdserver/server.go:triggerSnapshot()
+    📁 server/storage/backend/backend.go:defrag()
+    📁 server/lease/lessor.go:Promote()/Demote()
+  }
+}
+
+package "性能指标 Performance Metrics" {
+  class LatencyMetrics {
+    +readLatency: time.Duration
+    +writeLatency: time.Duration
+    +p50: time.Duration
+    +p95: time.Duration
+    +p99: time.Duration
+    +p999: time.Duration
+    --
+    📁 server/etcdserver/api/v3rpc/interceptor.go
+    📁 server/storage/mvcc/metrics.go
+    📁 github.com/prometheus/client_golang/prometheus
+  }
+  
+  class ThroughputMetrics {
+    +readTPS: int64
+    +writeTPS: int64
+    +totalOPS: int64
+    +networkThroughput: int64
+    --
+    📁 server/etcdserver/metrics.go
+    📁 server/etcdserver/api/v3rpc/metrics.go
+    📁 server/etcdserver/api/rafthttp/metrics.go
+  }
+  
+  class ResourceMetrics {
+    +cpuUsage: float64
+    +memoryUsage: int64
+    +diskIOPS: int64
+    +networkLatency: time.Duration
+    --
+    📁 server/etcdserver/server.go:monitorFileDescriptor()
+    📁 server/storage/backend/backend.go:Size()
+    📁 runtime.ReadMemStats()
+    📁 /proc/stat, /proc/meminfo
+  }
+}
+
+' 关系连接
+StorageOptimization --> EtcdConfiguration : 影响配置
+MemoryOptimization --> EtcdConfiguration : 影响配置
+NetworkOptimization --> GRPCOptimization : 影响 gRPC
+CPUOptimization --> OSOptimization : 影响系统
+
+EtcdConfiguration --> ClientOptimization : 影响客户端
+ClientOptimization --> DataModelOptimization : 数据设计
+DataModelOptimization --> TransactionOptimization : 事务优化
+
+ClusterSizing --> TopologyOptimization : 拓扑设计
+TopologyOptimization --> LoadBalancing : 负载均衡
+
+MetricsCollection --> PerformanceAnalysis : 性能分析
+PerformanceAnalysis --> AutoTuning : 自动调优
+
+MetricsCollection --> LatencyMetrics : 延迟指标
+MetricsCollection --> ThroughputMetrics : 吞吐量指标
+MetricsCollection --> ResourceMetrics : 资源指标
+
+note right of StorageOptimization
+  存储优化实现位置:
+  📁 server/embed/config.go - 存储配置
+  📁 server/storage/wal/wal.go - WAL 实现
+  📁 server/storage/backend/ - BoltDB 后端
+  
+  关键配置参数:
+  - WalDir: WAL 目录分离
+  - BackendBatchLimit: 批处理限制
+  - BackendBatchInterval: 批处理间隔
+end note
+
+note right of EtcdConfiguration
+  etcd 配置实现位置:
+  📁 server/embed/config.go - 主配置结构
+  📁 raft/raft.go - Raft 参数配置
+  📁 server/etcdserver/config.go - 服务器配置
+  
+  关键参数:
+  - TickMs: 心跳间隔
+  - ElectionMs: 选举超时
+  - SnapshotCount: 快照触发条件
+end note
+
+note right of ClientOptimization
+  客户端优化实现位置:
+  📁 client/v3/client.go - 客户端核心
+  📁 client/v3/balancer/ - 负载均衡
+  📁 client/v3/retry.go - 重试机制
+  
+  优化策略:
+  - 连接复用和池化
+  - 批量操作事务
+  - 异步处理机制
+end note
+
+note right of MetricsCollection
+  监控指标实现位置:
+  📁 server/etcdserver/api/v3rpc/metrics.go
+  📁 server/storage/mvcc/metrics.go
+  📁 raft/node.go - Raft 状态指标
+  
+  指标类型:
+  - Prometheus 格式指标
+  - 内部性能计数器
+  - 资源使用统计
+end note
+
+note as N1
+  代码实现说明:
+  
+  📁 表示具体的源码文件路径
+  每个组件都标注了主要实现文件
+  配置参数对应具体的结构体字段
+  
+  使用方式:
+  1. 根据优化需求找到对应组件
+  2. 查看标注的源码文件位置
+  3. 修改相关配置或实现
+  4. 验证优化效果
+end note
+
+@enduml

@@ -1,0 +1,290 @@
+@startuml server-module-structure-code
+!theme plain
+title etcd Server 模块结构图 - 代码实现位置
+
+package "etcdmain 主程序" {
+  class Main {
+    +main()
+    +parseConfig()
+    +startEtcd()
+    --
+    📁 server/etcdmain/main.go:main()
+    📁 server/etcdmain/config.go:newConfig()
+    📁 server/etcdmain/etcd.go:startEtcdOrProxyV2()
+  }
+}
+
+package "embed 嵌入式服务器" {
+  class Etcd {
+    +Peers: []*peerListener
+    +Clients: []net.Listener
+    +Server: *etcdserver.EtcdServer
+    +cfg: Config
+    +Start()
+    +Close()
+    --
+    📁 server/embed/etcd.go:Etcd
+    📁 server/embed/etcd.go:StartEtcd()
+    📁 server/embed/etcd.go:(*Etcd).Close()
+  }
+  
+  class Config {
+    +Name: string
+    +Dir: string
+    +WalDir: string
+    +ListenClientUrls: []url.URL
+    +ListenPeerUrls: []url.URL
+    +InitialCluster: string
+    --
+    📁 server/embed/config.go:Config
+    📁 server/embed/config.go:NewConfig()
+    📁 server/embed/config.go:(*Config).Validate()
+  }
+}
+
+package "etcdserver 核心服务器" {
+  class EtcdServer {
+    +r: raftNode
+    +kv: mvcc.ConsistentWatchableKV
+    +lessor: lease.Lessor
+    +be: backend.Backend
+    +cluster: *membership.RaftCluster
+    +authStore: auth.AuthStore
+    +Start()
+    +Stop()
+    +Process()
+    --
+    📁 server/etcdserver/server.go:EtcdServer
+    📁 server/etcdserver/server.go:NewServer()
+    📁 server/etcdserver/server.go:(*EtcdServer).Start()
+    📁 server/etcdserver/server.go:(*EtcdServer).Stop()
+    📁 server/etcdserver/server.go:(*EtcdServer).run()
+  }
+  
+  class raftNode {
+    +node: raft.Node
+    +raftStorage: *raft.MemoryStorage
+    +transport: rafthttp.Transporter
+    +storage: Storage
+    +start()
+    +stop()
+    +propose()
+    --
+    📁 server/etcdserver/raft.go:raftNode
+    📁 server/etcdserver/raft.go:newRaftNode()
+    📁 server/etcdserver/raft.go:(*raftNode).start()
+    📁 server/etcdserver/raft.go:(*raftNode).stop()
+    📁 server/etcdserver/raft.go:(*raftNode).propose()
+  }
+  
+  class applyV3 {
+    +s: *EtcdServer
+    +Apply()
+    +Put()
+    +Range()
+    +DeleteRange()
+    +Txn()
+    --
+    📁 server/etcdserver/apply/apply_v3.go:applierV3
+    📁 server/etcdserver/apply/apply_v3.go:(*applierV3).Apply()
+    📁 server/etcdserver/apply/apply_v3.go:(*applierV3).Put()
+    📁 server/etcdserver/apply/apply_v3.go:(*applierV3).Range()
+    📁 server/etcdserver/apply/apply_v3.go:(*applierV3).Txn()
+  }
+}
+
+package "API 处理层" {
+  class v3rpc {
+    +KVServer
+    +WatchServer
+    +LeaseServer
+    +AuthServer
+    +ClusterServer
+    +MaintenanceServer
+    --
+    📁 server/etcdserver/api/v3rpc/grpc.go:Server()
+    📁 server/etcdserver/api/v3rpc/key.go:kvServer
+    📁 server/etcdserver/api/v3rpc/watch.go:watchServer
+    📁 server/etcdserver/api/v3rpc/lease.go:LeaseServer
+    📁 server/etcdserver/api/v3rpc/auth.go:AuthServer
+    📁 server/etcdserver/api/v3rpc/cluster.go:ClusterServer
+    📁 server/etcdserver/api/v3rpc/maintenance.go:MaintenanceServer
+  }
+  
+  class quotaKVServer {
+    +KVServer
+    +checkQuota()
+    --
+    📁 server/etcdserver/api/v3rpc/quota.go:quotaKVServer
+    📁 server/etcdserver/api/v3rpc/quota.go:(*quotaKVServer).Put()
+    📁 server/etcdserver/api/v3rpc/quota.go:(*quotaKVServer).Txn()
+  }
+  
+  class authKVServer {
+    +KVServer
+    +checkAuth()
+    --
+    📁 server/etcdserver/api/v3rpc/auth.go:authKVServer
+    📁 server/etcdserver/api/v3rpc/auth.go:(*authKVServer).Range()
+    📁 server/etcdserver/api/v3rpc/auth.go:(*authKVServer).Put()
+    📁 server/etcdserver/api/v3rpc/auth.go:(*authKVServer).DeleteRange()
+  }
+}
+
+package "网络传输层" {
+  class rafthttp.Transport {
+    +ID: types.ID
+    +ClusterID: types.ID
+    +Raft: Raft
+    +peers: map[types.ID]Peer
+    +Send()
+    +AddPeer()
+    +RemovePeer()
+    --
+    📁 server/etcdserver/api/rafthttp/transport.go:Transport
+    📁 server/etcdserver/api/rafthttp/transport.go:(*Transport).Start()
+    📁 server/etcdserver/api/rafthttp/transport.go:(*Transport).Send()
+    📁 server/etcdserver/api/rafthttp/transport.go:(*Transport).AddPeer()
+    📁 server/etcdserver/api/rafthttp/transport.go:(*Transport).RemovePeer()
+  }
+  
+  class pipeline {
+    +peerID: types.ID
+    +tr: *Transport
+    +msgc: chan raftpb.Message
+    +handle()
+    +post()
+    --
+    📁 server/etcdserver/api/rafthttp/pipeline.go:pipeline
+    📁 server/etcdserver/api/rafthttp/pipeline.go:(*pipeline).start()
+    📁 server/etcdserver/api/rafthttp/pipeline.go:(*pipeline).handle()
+    📁 server/etcdserver/api/rafthttp/pipeline.go:(*pipeline).post()
+  }
+}
+
+' 关系连接
+Main --> Etcd : 创建和启动\n📁 etcdmain/etcd.go
+Etcd --> EtcdServer : 包含\n📁 embed/etcd.go
+Etcd --> Config : 使用配置\n📁 embed/config.go
+
+EtcdServer --> raftNode : 包含 Raft 节点\n📁 server/etcdserver/raft.go
+EtcdServer --> applyV3 : 应用状态机\n📁 server/etcdserver/apply/
+raftNode --> rafthttp.Transport : 网络传输\n📁 api/rafthttp/
+
+v3rpc --> quotaKVServer : 装饰器模式\n📁 v3rpc/quota.go
+quotaKVServer --> authKVServer : 装饰器模式\n📁 v3rpc/auth.go
+authKVServer --> EtcdServer : 最终处理\n📁 etcdserver/server.go
+
+rafthttp.Transport --> pipeline : 管道传输\n📁 rafthttp/pipeline.go
+
+note right of EtcdServer
+  核心服务器实现位置:
+  📁 server/etcdserver/server.go
+  
+  主要方法:
+  - NewServer(): 创建服务器实例
+  - Start(): 启动服务器
+  - run(): 主运行循环
+  - Process(): 处理 Raft 消息
+  - applyEntryNormal(): 应用日志条目
+  
+  关键字段:
+  - r: Raft 节点
+  - kv: MVCC 存储
+  - lessor: 租约管理器
+  - authStore: 认证存储
+end note
+
+note right of raftNode
+  Raft 节点实现位置:
+  📁 server/etcdserver/raft.go
+  
+  主要方法:
+  - newRaftNode(): 创建 Raft 节点
+  - start(): 启动 Raft 处理
+  - propose(): 提议新条目
+  - publishEntries(): 发布已提交条目
+  
+  集成组件:
+  - raft.Node: Raft 算法核心
+  - raftStorage: 内存存储
+  - transport: 网络传输
+  - wal: 预写日志
+end note
+
+note right of applyV3
+  状态机应用实现位置:
+  📁 server/etcdserver/apply/apply_v3.go
+  
+  主要方法:
+  - Apply(): 应用 Raft 条目
+  - Put(): 处理 Put 操作
+  - Range(): 处理 Range 操作
+  - DeleteRange(): 处理删除操作
+  - Txn(): 处理事务操作
+  
+  功能:
+  - 解析 Raft 日志条目
+  - 执行 MVCC 操作
+  - 生成响应结果
+  - 触发 Watch 事件
+end note
+
+note right of v3rpc
+  gRPC 服务实现位置:
+  📁 server/etcdserver/api/v3rpc/
+  
+  服务器组件:
+  - grpc.go: 服务器创建和配置
+  - key.go: KV 服务实现
+  - watch.go: Watch 服务实现
+  - lease.go: Lease 服务实现
+  - auth.go: Auth 服务实现
+  - maintenance.go: 维护服务实现
+  
+  装饰器模式:
+  - quotaKVServer: 配额检查
+  - authKVServer: 权限验证
+  - 链式装饰提供多层保护
+end note
+
+note right of rafthttp.Transport
+  网络传输实现位置:
+  📁 server/etcdserver/api/rafthttp/
+  
+  核心文件:
+  - transport.go: 传输层主实现
+  - peer.go: 对等节点管理
+  - pipeline.go: 流水线传输
+  - stream.go: 流式传输
+  - snapshot_sender.go: 快照发送
+  
+  传输策略:
+  - Pipeline: 批量消息传输
+  - Stream: 频繁小消息传输
+  - Snapshot: 大型快照传输
+end note
+
+note as N1
+  启动流程代码路径:
+  
+  1. server/etcdmain/main.go:main()
+     ↓
+  2. server/etcdmain/etcd.go:startEtcdOrProxyV2()
+     ↓
+  3. server/embed/etcd.go:StartEtcd()
+     ↓
+  4. server/etcdserver/server.go:NewServer()
+     ↓
+  5. server/etcdserver/server.go:(*EtcdServer).Start()
+     ↓
+  6. server/etcdserver/raft.go:(*raftNode).start()
+     ↓
+  7. server/etcdserver/api/v3rpc/grpc.go:Server()
+  
+  关键配置文件:
+  - server/embed/config.go: 嵌入式配置
+  - server/etcdserver/config.go: 服务器配置
+end note
+
+@enduml

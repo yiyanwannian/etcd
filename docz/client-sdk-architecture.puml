@@ -1,0 +1,252 @@
+@startuml client-sdk-architecture
+!theme plain
+title etcd 客户端 SDK 架构图
+
+package "客户端核心 Client Core" {
+  class Client {
+    +Cluster
+    +KV
+    +Lease
+    +Watcher
+    +Auth
+    +Maintenance
+    +conn: *grpc.ClientConn
+    +cfg: Config
+    +resolver: *EtcdManualResolver
+    +New()
+    +Close()
+  }
+  
+  class Config {
+    +Endpoints: []string
+    +AutoSyncInterval: time.Duration
+    +DialTimeout: time.Duration
+    +DialKeepAliveTime: time.Duration
+    +DialKeepAliveTimeout: time.Duration
+    +TLS: *tls.Config
+    +Username: string
+    +Password: string
+    +Logger: *zap.Logger
+  }
+}
+
+package "KV 接口 KV Interface" {
+  interface KV {
+    +Put(): (*PutResponse, error)
+    +Get(): (*GetResponse, error)
+    +Delete(): (*DeleteResponse, error)
+    +Compact(): (*CompactResponse, error)
+    +Do(): (OpResponse, error)
+    +Txn(): Txn
+  }
+  
+  class kv {
+    +remote: pb.KVClient
+    +callOpts: []grpc.CallOption
+  }
+  
+  interface Txn {
+    +If(): Txn
+    +Then(): Txn
+    +Else(): Txn
+    +Commit(): (*TxnResponse, error)
+  }
+  
+  class txn {
+    +kv: *kv
+    +cif: bool
+    +cthen: bool
+    +celse: bool
+    +cmps: []*pb.Compare
+    +sus: []*pb.RequestOp
+    +fas: []*pb.RequestOp
+  }
+}
+
+package "Watch 接口 Watch Interface" {
+  interface Watcher {
+    +Watch(): WatchChan
+    +RequestProgress(): error
+    +Close(): error
+  }
+  
+  class watcher {
+    +remote: pb.WatchClient
+    +callOpts: []grpc.CallOption
+    +mu: sync.RWMutex
+    +streams: map[string]*watchGrpcStream
+  }
+  
+  class watchGrpcStream {
+    +owner: *watcher
+    +remote: pb.Watch_WatchClient
+    +watcherStream: chan WatchResponse
+    +respc: chan *pb.WatchResponse
+    +donec: chan struct{}
+    +errc: chan error
+    +ctxs: map[int64]*watcherStream
+  }
+  
+  class WatchResponse {
+    +Header: pb.ResponseHeader
+    +Events: []*Event
+    +CompactRevision: int64
+    +Canceled: bool
+    +Created: bool
+  }
+}
+
+package "Lease 接口 Lease Interface" {
+  interface Lease {
+    +Grant(): (*LeaseGrantResponse, error)
+    +Revoke(): (*LeaseRevokeResponse, error)
+    +TimeToLive(): (*LeaseTimeToLiveResponse, error)
+    +Leases(): (*LeaseLeasesResponse, error)
+    +KeepAlive(): (<-chan *LeaseKeepAliveResponse, error)
+    +KeepAliveOnce(): (*LeaseKeepAliveResponse, error)
+    +Close(): error
+  }
+  
+  class lessor {
+    +remote: pb.LeaseClient
+    +callOpts: []grpc.CallOption
+    +mu: sync.RWMutex
+    +keepAlives: map[LeaseID]*keepAlive
+    +firstKeepAliveTimeout: time.Duration
+  }
+  
+  class keepAlive {
+    +chs: []chan<- *LeaseKeepAliveResponse
+    +ctxs: []context.Context
+    +deadline: time.Time
+    +nextKeepAlive: time.Time
+    +donec: chan struct{}
+  }
+}
+
+package "Auth 接口 Auth Interface" {
+  interface Auth {
+    +AuthEnable(): (*AuthEnableResponse, error)
+    +AuthDisable(): (*AuthDisableResponse, error)
+    +Authenticate(): (*AuthenticateResponse, error)
+    +UserAdd(): (*AuthUserAddResponse, error)
+    +UserDelete(): (*AuthUserDeleteResponse, error)
+    +UserChangePassword(): (*AuthUserChangePasswordResponse, error)
+    +UserGrantRole(): (*AuthUserGrantRoleResponse, error)
+    +UserGet(): (*AuthUserGetResponse, error)
+    +UserList(): (*AuthUserListResponse, error)
+    +UserRevokeRole(): (*AuthUserRevokeRoleResponse, error)
+    +RoleAdd(): (*AuthRoleAddResponse, error)
+    +RoleGrantPermission(): (*AuthRoleGrantPermissionResponse, error)
+    +RoleGet(): (*AuthRoleGetResponse, error)
+    +RoleList(): (*AuthRoleListResponse, error)
+    +RoleRevokePermission(): (*AuthRoleRevokePermissionResponse, error)
+    +RoleDelete(): (*AuthRoleDeleteResponse, error)
+  }
+  
+  class auth {
+    +remote: pb.AuthClient
+    +callOpts: []grpc.CallOption
+  }
+}
+
+package "连接管理 Connection Management" {
+  class resolver.EtcdManualResolver {
+    +endpoints: []string
+    +cc: resolver.ClientConn
+    +UpdateState()
+    +ResolveNow()
+    +Close()
+  }
+  
+  class balancer {
+    +endpoints: []string
+    +pinAddr: string
+    +mu: sync.RWMutex
+    +Build()
+    +Pick()
+    +Close()
+  }
+  
+  class healthBalancer {
+    +balancer
+    +unhealthyHostPort: map[string]time.Time
+    +hostPortError: map[string]error
+    +unhealthyMu: sync.RWMutex
+  }
+}
+
+package "重试机制 Retry Logic" {
+  class retryInterceptor {
+    +retryPolicy: retryPolicy
+    +UnaryClientInterceptor()
+    +StreamClientInterceptor()
+  }
+  
+  class retryPolicy {
+    +max: int
+    +backoff: backoffFunc
+    +retryableFunc: retryableFunc
+  }
+}
+
+' 关系连接
+Client --> Config : 使用配置
+Client --> KV : 实现接口
+Client --> Watcher : 实现接口
+Client --> Lease : 实现接口
+Client --> Auth : 实现接口
+
+kv --> KV : 实现
+txn --> Txn : 实现
+kv --> txn : 创建事务
+
+watcher --> Watcher : 实现
+watcher --> watchGrpcStream : 管理流
+watchGrpcStream --> WatchResponse : 生成响应
+
+lessor --> Lease : 实现
+lessor --> keepAlive : 管理续约
+
+auth --> Auth : 实现
+
+Client --> resolver.EtcdManualResolver : 使用解析器
+resolver.EtcdManualResolver --> balancer : 负载均衡
+balancer --> healthBalancer : 健康检查
+
+Client --> retryInterceptor : 重试拦截器
+retryInterceptor --> retryPolicy : 重试策略
+
+note right of Client
+  客户端主入口
+  - 管理 gRPC 连接
+  - 提供统一接口
+  - 处理认证和重试
+  - 支持负载均衡
+end note
+
+note right of watchGrpcStream
+  Watch 流管理
+  - 维护 gRPC 流
+  - 处理事件分发
+  - 管理多个监听器
+  - 错误处理和重连
+end note
+
+note right of keepAlive
+  租约续期管理
+  - 自动续期机制
+  - 多通道支持
+  - 超时处理
+  - 生命周期管理
+end note
+
+note right of healthBalancer
+  健康检查负载均衡
+  - 端点健康监控
+  - 故障转移
+  - 连接管理
+  - 性能优化
+end note
+
+@enduml

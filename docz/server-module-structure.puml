@@ -1,0 +1,146 @@
+@startuml server-module-structure
+!theme plain
+title etcd Server 模块结构图
+
+package "etcdmain 主程序" {
+  class Main {
+    +main()
+    +parseConfig()
+    +startEtcd()
+  }
+}
+
+package "embed 嵌入式服务器" {
+  class Etcd {
+    +Peers: []*peerListener
+    +Clients: []net.Listener
+    +Server: *etcdserver.EtcdServer
+    +cfg: Config
+    +Start()
+    +Close()
+  }
+  
+  class Config {
+    +Name: string
+    +Dir: string
+    +WalDir: string
+    +ListenClientUrls: []url.URL
+    +ListenPeerUrls: []url.URL
+    +InitialCluster: string
+  }
+}
+
+package "etcdserver 核心服务器" {
+  class EtcdServer {
+    +r: raftNode
+    +kv: mvcc.ConsistentWatchableKV
+    +lessor: lease.Lessor
+    +be: backend.Backend
+    +cluster: *membership.RaftCluster
+    +authStore: auth.AuthStore
+    +Start()
+    +Stop()
+    +Process()
+  }
+  
+  class raftNode {
+    +node: raft.Node
+    +raftStorage: *raft.MemoryStorage
+    +transport: rafthttp.Transporter
+    +storage: Storage
+    +start()
+    +stop()
+    +propose()
+  }
+  
+  class applyV3 {
+    +s: *EtcdServer
+    +Apply()
+    +Put()
+    +Range()
+    +DeleteRange()
+    +Txn()
+  }
+}
+
+package "API 处理层" {
+  class v3rpc {
+    +KVServer
+    +WatchServer
+    +LeaseServer
+    +AuthServer
+    +ClusterServer
+    +MaintenanceServer
+  }
+  
+  class quotaKVServer {
+    +KVServer
+    +checkQuota()
+  }
+  
+  class authKVServer {
+    +KVServer
+    +checkAuth()
+  }
+}
+
+package "网络传输层" {
+  class rafthttp.Transport {
+    +ID: types.ID
+    +ClusterID: types.ID
+    +Raft: Raft
+    +peers: map[types.ID]Peer
+    +Send()
+    +AddPeer()
+    +RemovePeer()
+  }
+  
+  class pipeline {
+    +peerID: types.ID
+    +tr: *Transport
+    +msgc: chan raftpb.Message
+    +handle()
+    +post()
+  }
+}
+
+' 关系连接
+Main --> Etcd : 创建和启动
+Etcd --> EtcdServer : 包含
+Etcd --> Config : 使用配置
+
+EtcdServer --> raftNode : 包含 Raft 节点
+EtcdServer --> applyV3 : 应用状态机
+raftNode --> rafthttp.Transport : 网络传输
+
+v3rpc --> quotaKVServer : 装饰器模式
+quotaKVServer --> authKVServer : 装饰器模式
+authKVServer --> EtcdServer : 最终处理
+
+rafthttp.Transport --> pipeline : 管道传输
+
+note right of EtcdServer
+  核心服务器组件
+  - 管理 Raft 一致性
+  - 处理客户端请求
+  - 维护集群状态
+  - 协调各个子系统
+end note
+
+note right of raftNode
+  Raft 算法实现
+  - 领导者选举
+  - 日志复制
+  - 状态机应用
+  - 网络通信
+end note
+
+note right of applyV3
+  状态机应用层
+  - 解析 Raft 日志
+  - 执行具体操作
+  - 更新存储状态
+  - 生成响应结果
+end note
+
+@enduml

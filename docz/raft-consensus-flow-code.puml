@@ -1,0 +1,354 @@
+@startuml raft-consensus-flow-code
+!theme plain
+title Raft 一致性算法流程图 - 代码实现位置
+
+participant "客户端\nClient" as C
+participant "领导者\nLeader" as L
+participant "跟随者1\nFollower1" as F1
+participant "跟随者2\nFollower2" as F2
+
+== 正常写入流程 Normal Write Flow ==
+
+C -> L : 写入请求\nPut Request
+note right of C
+📁 client/v3/kv.go:(*kv).Put()
+📁 client/v3/client.go:(*Client).dial()
+end note
+
+activate L
+note right of L
+📁 server/etcdserver/api/v3rpc/key.go:(*kvServer).Put()
+📁 server/etcdserver/server.go:(*EtcdServer).Put()
+📁 server/etcdserver/server.go:(*EtcdServer).processInternalRaftRequestOnce()
+end note
+
+L -> L : 添加到本地日志\nAppend to Local Log
+note right of L
+📁 raft/raft.go:(*raft).Step()
+📁 raft/raft.go:(*raft).appendEntry()
+📁 raft/log.go:(*raftLog).append()
+📁 server/storage/wal/wal.go:(*WAL).Save()
+
+日志条目包含:
+- Term: 当前任期
+- Index: 日志索引  
+- Data: 请求数据
+end note
+
+L -> F1 : AppendEntries RPC\n(日志复制)
+note right of L
+📁 server/etcdserver/api/rafthttp/transport.go:(*Transport).Send()
+📁 server/etcdserver/api/rafthttp/pipeline.go:(*pipeline).post()
+📁 raft/raft.go:(*raft).sendAppend()
+end note
+
+L -> F2 : AppendEntries RPC\n(日志复制)
+
+activate F1
+note right of F1
+📁 server/etcdserver/api/rafthttp/stream.go:(*streamReader).decodeLoop()
+📁 server/etcdserver/raft.go:(*raftNode).Process()
+📁 raft/raft.go:(*raft).Step()
+end note
+
+F1 -> F1 : 检查日志一致性\nCheck Log Consistency
+note right of F1
+📁 raft/raft.go:(*raft).handleAppendEntries()
+📁 raft/log.go:(*raftLog).maybeAppend()
+📁 raft/log.go:(*raftLog).findConflict()
+end note
+
+F1 -> F1 : 添加到本地日志\nAppend to Local Log
+note right of F1
+📁 raft/log.go:(*raftLog).append()
+📁 server/storage/wal/wal.go:(*WAL).Save()
+end note
+
+F1 -> L : 成功响应\nSuccess Response
+note right of F1
+📁 raft/raft.go:(*raft).send()
+📁 server/etcdserver/api/rafthttp/transport.go:(*Transport).Send()
+end note
+
+activate F2
+note right of F2
+📁 server/etcdserver/api/rafthttp/stream.go:(*streamReader).decodeLoop()
+📁 server/etcdserver/raft.go:(*raftNode).Process()
+📁 raft/raft.go:(*raft).Step()
+end note
+
+F2 -> F2 : 检查日志一致性\nCheck Log Consistency  
+note right of F2
+📁 raft/raft.go:(*raft).handleAppendEntries()
+📁 raft/log.go:(*raftLog).maybeAppend()
+end note
+
+F2 -> F2 : 添加到本地日志\nAppend to Local Log
+note right of F2
+📁 raft/log.go:(*raftLog).append()
+📁 server/storage/wal/wal.go:(*WAL).Save()
+end note
+
+F2 -> L : 成功响应\nSuccess Response
+note right of F2
+📁 raft/raft.go:(*raft).send()
+📁 server/etcdserver/api/rafthttp/transport.go:(*Transport).Send()
+end note
+
+deactivate F1
+deactivate F2
+
+note over L : 收到大多数节点确认\nReceived Majority Acks
+note right of L
+📁 raft/raft.go:(*raft).maybeCommit()
+📁 raft/raft.go:quorum()
+end note
+
+L -> L : 提交日志条目\nCommit Log Entry
+note right of L
+📁 raft/raft.go:(*raft).commitTo()
+📁 raft/log.go:(*raftLog).commitTo()
+end note
+
+L -> L : 应用到状态机\nApply to State Machine
+note right of L
+📁 server/etcdserver/server.go:(*EtcdServer).applyEntryNormal()
+📁 server/etcdserver/apply/apply_v3.go:(*applierV3).Apply()
+📁 server/storage/mvcc/kvstore.go:(*store).Put()
+end note
+
+L -> C : 写入成功响应\nPut Response
+note right of L
+📁 server/etcdserver/api/v3rpc/key.go:(*kvServer).Put()
+📁 api/etcdserverpb/rpc.proto:PutResponse
+end note
+deactivate L
+
+L -> F1 : 下次心跳通知提交\nNext Heartbeat with Commit Index
+note right of L
+📁 raft/raft.go:(*raft).sendHeartbeat()
+📁 raft/raft.go:(*raft).bcastHeartbeat()
+end note
+
+L -> F2 : 下次心跳通知提交\nNext Heartbeat with Commit Index
+
+F1 -> F1 : 应用已提交条目\nApply Committed Entries
+note right of F1
+📁 server/etcdserver/server.go:(*EtcdServer).applyEntryNormal()
+📁 server/etcdserver/apply/apply_v3.go:(*applierV3).Apply()
+end note
+
+F2 -> F2 : 应用已提交条目\nApply Committed Entries
+note right of F2
+📁 server/etcdserver/server.go:(*EtcdServer).applyEntryNormal()
+📁 server/etcdserver/apply/apply_v3.go:(*applierV3).Apply()
+end note
+
+== 领导者选举流程 Leader Election ==
+
+note over F1 : 选举超时\nElection Timeout
+note right of F1
+📁 raft/raft.go:(*raft).tick()
+📁 raft/raft.go:(*raft).tickElection()
+📁 raft/raft.go:(*raft).hup()
+end note
+
+F1 -> F1 : 成为候选者\nBecome Candidate
+note right of F1
+📁 raft/raft.go:(*raft).becomeCandidate()
+📁 raft/raft.go:(*raft).campaign()
+end note
+
+F1 -> F1 : 增加任期\nIncrement Term
+note right of F1
+📁 raft/raft.go:(*raft).becomeCandidate()
+raft.Term++
+end note
+
+F1 -> F1 : 为自己投票\nVote for Self
+note right of F1
+📁 raft/raft.go:(*raft).becomeCandidate()
+raft.Vote = raft.id
+end note
+
+F1 -> L : RequestVote RPC\n请求投票
+note right of F1
+📁 raft/raft.go:(*raft).campaign()
+📁 server/etcdserver/api/rafthttp/transport.go:(*Transport).Send()
+end note
+
+F1 -> F2 : RequestVote RPC\n请求投票
+
+L -> L : 检查任期和日志\nCheck Term and Log
+note right of L
+📁 raft/raft.go:(*raft).Step()
+📁 raft/raft.go:(*raft).handleRequestVote()
+📁 raft/log.go:(*raftLog).isUpToDate()
+end note
+
+L -> F1 : 投票授予\nVote Granted
+note right of L
+📁 raft/raft.go:(*raft).send()
+📁 api/etcdserverpb/raft_internal.proto:Message
+end note
+
+F2 -> F2 : 检查任期和日志\nCheck Term and Log  
+note right of F2
+📁 raft/raft.go:(*raft).Step()
+📁 raft/raft.go:(*raft).handleRequestVote()
+end note
+
+F2 -> F1 : 投票授予\nVote Granted
+note right of F2
+📁 raft/raft.go:(*raft).send()
+end note
+
+note over F1 : 获得大多数选票\nReceived Majority Votes
+note right of F1
+📁 raft/raft.go:(*raft).Step()
+📁 raft/raft.go:quorum()
+end note
+
+F1 -> F1 : 成为领导者\nBecome Leader
+note right of F1
+📁 raft/raft.go:(*raft).becomeLeader()
+📁 raft/raft.go:(*raft).bcastAppend()
+end note
+
+F1 -> L : 心跳消息\nHeartbeat (AppendEntries)
+note right of F1
+📁 raft/raft.go:(*raft).sendHeartbeat()
+📁 raft/raft.go:(*raft).bcastHeartbeat()
+end note
+
+F1 -> F2 : 心跳消息\nHeartbeat (AppendEntries)
+
+L -> L : 发现更高任期\nDiscover Higher Term
+note right of L
+📁 raft/raft.go:(*raft).Step()
+📁 raft/raft.go:(*raft).becomeFollower()
+end note
+
+L -> L : 成为跟随者\nBecome Follower
+
+== 网络分区恢复 Network Partition Recovery ==
+
+note over L, F2 : 网络分区\nNetwork Partition
+note right of L
+📁 server/etcdserver/api/rafthttp/transport.go:(*Transport).Send()
+📁 server/etcdserver/api/rafthttp/peer.go:(*peer).send()
+网络错误处理
+end note
+
+C -> L : 写入请求\nPut Request
+L -> F1 : AppendEntries RPC
+L -x F2 : 网络不可达\nNetwork Unreachable
+note right of L
+📁 server/etcdserver/api/rafthttp/pipeline.go:(*pipeline).post()
+网络超时或连接失败
+end note
+
+note over L : 无法获得大多数确认\nCannot Get Majority
+note right of L
+📁 raft/raft.go:(*raft).maybeCommit()
+📁 server/etcdserver/server.go:(*EtcdServer).processInternalRaftRequestOnce()
+context.DeadlineExceeded
+end note
+
+L -> C : 请求失败\nRequest Failed
+note right of L
+📁 server/etcdserver/api/v3rpc/key.go:(*kvServer).Put()
+返回超时错误
+end note
+
+note over L, F2 : 网络恢复\nNetwork Recovered
+note right of L
+📁 server/etcdserver/api/rafthttp/transport.go:(*Transport).AddPeer()
+📁 server/etcdserver/api/rafthttp/peer.go:(*peer).startPeer()
+重新建立连接
+end note
+
+L -> F2 : AppendEntries RPC\n(包含缺失日志)
+note right of L
+📁 raft/raft.go:(*raft).sendAppend()
+📁 raft/raft.go:(*raft).maybeSendAppend()
+发送缺失的日志条目
+end note
+
+F2 -> F2 : 同步缺失日志\nSync Missing Logs
+note right of F2
+📁 raft/raft.go:(*raft).handleAppendEntries()
+📁 raft/log.go:(*raftLog).maybeAppend()
+同步日志并应用已提交条目
+end note
+
+F2 -> L : 成功响应\nSuccess Response
+note right of F2
+📁 raft/raft.go:(*raft).send()
+确认日志同步完成
+end note
+
+note as N1
+Raft 算法核心实现位置:
+
+📁 raft/raft.go - Raft 算法主实现
+- (*raft).Step(): 处理消息
+- (*raft).tick(): 时钟驱动
+- (*raft).campaign(): 发起选举
+- (*raft).becomeLeader(): 成为领导者
+- (*raft).becomeFollower(): 成为跟随者
+- (*raft).becomeCandidate(): 成为候选者
+
+📁 raft/log.go - Raft 日志实现
+- (*raftLog).append(): 追加日志
+- (*raftLog).maybeAppend(): 条件追加
+- (*raftLog).commitTo(): 提交日志
+- (*raftLog).isUpToDate(): 检查日志新旧
+
+📁 raft/node.go - Raft 节点接口
+- (*node).Propose(): 提议新条目
+- (*node).Step(): 处理消息
+- (*node).Ready(): 获取就绪状态
+end note
+
+note as N2
+网络传输实现位置:
+
+📁 server/etcdserver/api/rafthttp/transport.go
+- (*Transport).Send(): 发送消息
+- (*Transport).AddPeer(): 添加对等节点
+- (*Transport).RemovePeer(): 移除对等节点
+
+📁 server/etcdserver/api/rafthttp/pipeline.go
+- (*pipeline).post(): 管道发送
+- (*pipeline).handle(): 处理响应
+
+📁 server/etcdserver/api/rafthttp/stream.go
+- (*streamWriter).run(): 流写入
+- (*streamReader).run(): 流读取
+
+📁 server/etcdserver/api/rafthttp/peer.go
+- (*peer).send(): 对等节点发送
+- (*peer).startPeer(): 启动对等节点
+end note
+
+note as N3
+状态机应用实现位置:
+
+📁 server/etcdserver/server.go
+- (*EtcdServer).applyEntryNormal(): 应用普通条目
+- (*EtcdServer).applyConfChange(): 应用配置变更
+- (*EtcdServer).processInternalRaftRequestOnce(): 处理内部请求
+
+📁 server/etcdserver/apply/apply_v3.go
+- (*applierV3).Apply(): 应用 v3 操作
+- (*applierV3).Put(): 应用 Put 操作
+- (*applierV3).Range(): 应用 Range 操作
+- (*applierV3).Txn(): 应用事务操作
+
+📁 server/storage/mvcc/kvstore.go
+- (*store).Put(): MVCC 存储
+- (*store).Range(): MVCC 查询
+end note
+
+@enduml

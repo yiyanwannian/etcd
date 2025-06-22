@@ -1,0 +1,334 @@
+@startuml lease-management-system-code
+!theme plain
+title etcd 租约管理系统 - 代码实现位置
+
+package "租约管理器 Lessor" {
+  interface Lessor {
+    +SetRangeDeleter()
+    +SetCheckpointer()
+    +Grant(): (*Lease, error)
+    +Revoke(): error
+    +Checkpoint(): error
+    +Attach(): error
+    +GetLease(): *Lease
+    +Detach(): error
+    +Promote()
+    +Demote()
+    +Renew(): (int64, error)
+    +Lookup(): *Lease
+    +Leases(): []*Lease
+    +ExpiredLeasesC(): <-chan []*Lease
+    +Recover(): error
+    +Stop()
+    --
+    📁 server/lease/lessor.go:Lessor
+    📁 server/lease/lessor.go:(*lessor).Grant()
+    📁 server/lease/lessor.go:(*lessor).Revoke()
+    📁 server/lease/lessor.go:(*lessor).Renew()
+    📁 server/lease/lessor.go:(*lessor).Promote()
+    📁 server/lease/lessor.go:(*lessor).Recover()
+  }
+  
+  class lessor {
+    +mu: sync.RWMutex
+    +leaseMap: map[LeaseID]*Lease
+    +leaseExpiredNotifier: *LeaseExpiredNotifier
+    +leaseCheckpointHeap: LeaseQueue
+    +b: backend.Backend
+    +minLeaseTTL: int64
+    +expiredC: chan []*Lease
+    +stopC: chan struct{}
+    +doneC: chan struct{}
+    +lg: *zap.Logger
+    +cp: Checkpointer
+    +rd: RangeDeleter
+    +primary: bool
+    --
+    📁 server/lease/lessor.go:lessor
+    📁 server/lease/lessor.go:NewLessor()
+    📁 server/lease/lessor.go:(*lessor).Grant()
+    📁 server/lease/lessor.go:(*lessor).Revoke()
+    📁 server/lease/lessor.go:(*lessor).runLoop()
+    📁 server/lease/lessor.go:(*lessor).expireExists()
+  }
+}
+
+package "租约对象 Lease Object" {
+  class Lease {
+    +ID: LeaseID
+    +ttl: int64
+    +remainingTTL: int64
+    +expiryTime: time.Time
+    +itemSet: map[LeaseItem]struct{}
+    +revokec: chan struct{}
+    +mu: sync.RWMutex
+    +expired: bool
+    --
+    📁 server/lease/lease.go:Lease
+    📁 server/lease/lease.go:(*Lease).expired()
+    📁 server/lease/lease.go:(*Lease).persistTo()
+    📁 server/lease/lease.go:(*Lease).Keys()
+  }
+  
+  class LeaseItem {
+    +Key: string
+    --
+    📁 server/lease/lease.go:LeaseItem
+  }
+  
+  class LeaseID {
+    +int64
+    --
+    📁 server/lease/lease.go:LeaseID
+    📁 server/lease/lease.go:int64ToLeaseID()
+    📁 server/lease/lease.go:LeaseID.String()
+  }
+}
+
+package "租约队列 Lease Queue" {
+  interface LeaseQueue {
+    +RegisterOrUpdate(): 
+    +Unregister(): *LeaseWithTime
+    +Poll(): *LeaseWithTime
+    +Len(): int
+    --
+    📁 server/lease/lease_queue.go:LeaseQueue
+    📁 server/lease/lease_queue.go:(*leaseQueue).RegisterOrUpdate()
+    📁 server/lease/lease_queue.go:(*leaseQueue).Poll()
+    📁 server/lease/lease_queue.go:(*leaseQueue).Unregister()
+  }
+  
+  class leaseQueue {
+    +array: []*LeaseWithTime
+    +idxMap: map[LeaseID]int
+    +heapifyUp()
+    +heapifyDown()
+    +swap()
+    --
+    📁 server/lease/lease_queue.go:leaseQueue
+    📁 server/lease/lease_queue.go:NewLeaseQueue()
+    📁 server/lease/lease_queue.go:(*leaseQueue).heapifyUp()
+    📁 server/lease/lease_queue.go:(*leaseQueue).heapifyDown()
+    📁 server/lease/lease_queue.go:(*leaseQueue).swap()
+  }
+  
+  class LeaseWithTime {
+    +id: LeaseID
+    +time: int64
+    --
+    📁 server/lease/lease_queue.go:LeaseWithTime
+  }
+  
+  class LeaseExpiredNotifier {
+    +m: map[LeaseID]*LeaseWithTime
+    +queue: LeaseQueue
+    +mu: sync.Mutex
+    --
+    📁 server/lease/lessor.go:LeaseExpiredNotifier
+    📁 server/lease/lessor.go:(*LeaseExpiredNotifier).RegisterOrUpdate()
+    📁 server/lease/lessor.go:(*LeaseExpiredNotifier).Unregister()
+    📁 server/lease/lessor.go:(*LeaseExpiredNotifier).Poll()
+  }
+}
+
+package "检查点机制 Checkpoint" {
+  interface Checkpointer {
+    +Checkpoint(): error
+    +CheckpointBatch(): error
+    --
+    📁 server/lease/lessor.go:Checkpointer
+    📁 server/etcdserver/server.go:(*EtcdServer).checkpointScheduledLeases()
+  }
+  
+  class LeaseCheckpoint {
+    +ID: LeaseID
+    +RemainingTTL: int64
+    --
+    📁 api/leasepb/lease.proto:LeaseCheckpoint
+    📁 server/lease/lessor.go:(*lessor).Checkpoint()
+  }
+  
+  class checkpointer {
+    +lg: *zap.Logger
+    +backend: backend.Backend
+    +cp: func(LeaseCheckpoint) error
+    --
+    📁 server/etcdserver/server.go:(*EtcdServer).checkpointScheduledLeases()
+    📁 server/etcdserver/server.go:(*EtcdServer).triggerSnapshot()
+  }
+}
+
+package "范围删除器 Range Deleter" {
+  interface RangeDeleter {
+    +TxnDeleteRange(): (*pb.DeleteRangeResponse, error)
+    --
+    📁 server/lease/lessor.go:RangeDeleter
+    📁 server/etcdserver/server.go:(*EtcdServer).applyEntryNormal()
+  }
+  
+  class rangeDeleter {
+    +store: mvcc.KV
+    +lg: *zap.Logger
+    --
+    📁 server/etcdserver/server.go:(*EtcdServer).deleteLeasedKeys()
+    📁 server/storage/mvcc/kvstore.go:(*store).DeleteRange()
+  }
+}
+
+package "租约持久化 Lease Persistence" {
+  class leasepb.Lease {
+    +ID: int64
+    +TTL: int64
+    --
+    📁 api/leasepb/lease.proto:Lease
+    📁 server/lease/lease.go:(*Lease).persistTo()
+  }
+  
+  class leasepb.LeaseCheckpoint {
+    +ID: int64
+    +RemainingTTL: int64
+    --
+    📁 api/leasepb/lease.proto:LeaseCheckpoint
+    📁 server/lease/lessor.go:(*lessor).Checkpoint()
+  }
+}
+
+' 关系连接
+lessor --> Lessor : 实现\n📁 server/lease/lessor.go
+lessor --> Lease : 管理租约\n📁 server/lease/lease.go
+lessor --> LeaseExpiredNotifier : 过期通知\n📁 server/lease/lessor.go
+lessor --> Checkpointer : 检查点\n📁 server/lease/lessor.go
+lessor --> RangeDeleter : 范围删除\n📁 server/lease/lessor.go
+
+Lease --> LeaseItem : 包含项目\n📁 server/lease/lease.go
+Lease --> LeaseID : 租约标识\n📁 server/lease/lease.go
+
+leaseQueue --> LeaseQueue : 实现\n📁 server/lease/lease_queue.go
+leaseQueue --> LeaseWithTime : 队列元素\n📁 server/lease/lease_queue.go
+LeaseExpiredNotifier --> leaseQueue : 使用队列\n📁 server/lease/lessor.go
+
+checkpointer --> Checkpointer : 实现\n📁 server/etcdserver/server.go
+checkpointer --> LeaseCheckpoint : 检查点数据\n📁 api/leasepb/lease.proto
+
+rangeDeleter --> RangeDeleter : 实现\n📁 server/etcdserver/server.go
+
+lessor --> leasepb.Lease : 持久化\n📁 api/leasepb/lease.proto
+lessor --> leasepb.LeaseCheckpoint : 检查点持久化\n📁 api/leasepb/lease.proto
+
+note right of lessor
+  租约管理器核心实现:
+  📁 server/lease/lessor.go
+  
+  关键方法:
+  - NewLessor(): 创建租约管理器
+  - Grant(): 创建租约
+  - Revoke(): 撤销租约
+  - Renew(): 续约
+  - runLoop(): 主运行循环
+  - expireExists(): 过期检查
+  
+  生命周期管理:
+  - Promote(): 提升为主节点
+  - Demote(): 降级为从节点
+  - Recover(): 故障恢复
+end note
+
+note right of leaseQueue
+  最小堆实现:
+  📁 server/lease/lease_queue.go
+  
+  核心算法:
+  - heapifyUp(): 向上调整堆
+  - heapifyDown(): 向下调整堆
+  - swap(): 交换元素
+  
+  特点:
+  - 按过期时间排序
+  - O(log n) 插入删除
+  - O(1) 获取最早过期
+  - 支持动态更新
+  
+  数据结构:
+  - array: 堆数组
+  - idxMap: 索引映射
+end note
+
+note right of LeaseExpiredNotifier
+  过期通知器实现:
+  📁 server/lease/lessor.go
+  
+  核心功能:
+  - RegisterOrUpdate(): 注册或更新租约
+  - Poll(): 获取过期租约
+  - Unregister(): 注销租约
+  
+  特点:
+  - 定时检查过期租约
+  - 批量处理过期事件
+  - 高效的时间管理
+  - 内存优化设计
+end note
+
+note right of checkpointer
+  检查点机制实现:
+  📁 server/etcdserver/server.go
+  
+  相关方法:
+  - checkpointScheduledLeases(): 定期检查点
+  - triggerSnapshot(): 触发快照
+  
+  功能:
+  - 定期保存租约状态
+  - 故障恢复支持
+  - 批量处理优化
+  - 数据一致性保证
+  
+  存储位置:
+  - leaseCheckpointBucketName: 检查点桶
+end note
+
+note as N1
+  租约系统初始化流程:
+  
+  1. server/etcdserver/server.go:NewServer()
+     ↓
+  2. server/lease/lessor.go:NewLessor()
+     ↓
+  3. server/lease/lease_queue.go:NewLeaseQueue()
+     ↓
+  4. server/lease/lessor.go:(*lessor).Recover()
+     ↓
+  5. server/lease/lessor.go:(*lessor).runLoop()
+  
+  API 集成:
+  📁 server/etcdserver/api/v3rpc/lease.go
+  - LeaseGrant(): 创建租约
+  - LeaseRevoke(): 撤销租约
+  - LeaseKeepAlive(): 保持活跃
+  - LeaseTimeToLive(): 获取剩余时间
+  
+  存储桶:
+  - leaseBucketName: 租约数据
+  - leaseCheckpointBucketName: 检查点数据
+end note
+
+note as N2
+  租约过期处理流程:
+  
+  1. server/lease/lessor.go:(*lessor).runLoop()
+     ↓ 定期检查
+  2. server/lease/lessor.go:(*lessor).expireExists()
+     ↓ 查找过期租约
+  3. server/lease/lessor.go:(*LeaseExpiredNotifier).Poll()
+     ↓ 获取过期租约
+  4. server/etcdserver/server.go:(*EtcdServer).deleteLeasedKeys()
+     ↓ 删除关联键
+  5. server/storage/mvcc/kvstore.go:(*store).DeleteRange()
+     ↓ 执行删除操作
+  
+  关键常量:
+  - leaseRevokeRate: 撤销速率限制
+  - maxLeaseCheckpointBatchSize: 批处理大小
+end note
+
+@enduml

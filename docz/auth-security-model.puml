@@ -1,0 +1,213 @@
+@startuml auth-security-model
+!theme plain
+title etcd 认证安全模型
+
+package "认证存储 Auth Store" {
+  interface AuthStore {
+    +AuthEnable(): error
+    +AuthDisable(): error
+    +IsAuthEnabled(): bool
+    +Authenticate(): (*pb.AuthenticateResponse, error)
+    +UserAdd(): (*pb.AuthUserAddResponse, error)
+    +UserDelete(): (*pb.AuthUserDeleteResponse, error)
+    +UserChangePassword(): (*pb.AuthUserChangePasswordResponse, error)
+    +UserGrantRole(): (*pb.AuthUserGrantRoleResponse, error)
+    +UserGet(): (*pb.AuthUserGetResponse, error)
+    +UserRevokeRole(): (*pb.AuthUserRevokeRoleResponse, error)
+    +UserList(): (*pb.AuthUserListResponse, error)
+    +RoleAdd(): (*pb.AuthRoleAddResponse, error)
+    +RoleGrantPermission(): (*pb.AuthRoleGrantPermissionResponse, error)
+    +RoleGet(): (*pb.AuthRoleGetResponse, error)
+    +RoleRevokePermission(): (*pb.AuthRoleRevokePermissionResponse, error)
+    +RoleDelete(): (*pb.AuthRoleDeleteResponse, error)
+    +RoleList(): (*pb.AuthRoleListResponse, error)
+    +IsAdminPermitted(): error
+    +IsMemberAllowed(): error
+    +IsRangePermitted(): error
+    +IsPutPermitted(): error
+    +IsDeleteRangePermitted(): error
+  }
+  
+  class authStore {
+    +be: backend.Backend
+    +enabled: bool
+    +enabledMu: sync.RWMutex
+    +rangePermCache: map[string]*unifiedRangePermissions
+    +tokenProvider: TokenProvider
+    +bcryptCost: int
+    +lg: *zap.Logger
+  }
+}
+
+package "用户管理 User Management" {
+  class User {
+    +Name: []byte
+    +Password: []byte
+    +Roles: []string
+    +Options: *UserAddOptions
+  }
+  
+  class UserAddOptions {
+    +NoPassword: bool
+  }
+}
+
+package "角色管理 Role Management" {
+  class Role {
+    +Name: []byte
+    +KeyPermission: []*authpb.Permission
+  }
+  
+  class Permission {
+    +PermType: Permission_Type
+    +Key: []byte
+    +RangeEnd: []byte
+  }
+  
+  enum Permission_Type {
+    READ
+    WRITE
+    READWRITE
+  }
+}
+
+package "令牌管理 Token Management" {
+  interface TokenProvider {
+    +assign(): (string, error)
+    +info(): (*AuthInfo, bool)
+    +enable()
+    +disable()
+    +invalidateUser()
+    +genTokenPrefix(): (string, error)
+  }
+  
+  class simpleTokenTTLKeeper {
+    +tokens: map[string]time.Time
+    +donec: chan struct{}
+    +stopc: chan struct{}
+    +deleteTokenFunc: func(string)
+    +mu: *sync.RWMutex
+    +addSimpleToken()
+    +resetSimpleToken()
+    +deleteSimpleToken()
+  }
+  
+  class jwtTokenProvider {
+    +signingMethod: jwt.SigningMethod
+    +key: interface{}
+    +ttl: time.Duration
+    +verifyOnly: bool
+  }
+  
+  class AuthInfo {
+    +Username: string
+    +Roles: []string
+    +Revision: uint64
+  }
+}
+
+package "权限缓存 Permission Cache" {
+  class unifiedRangePermissions {
+    +readPerms: adt.IntervalTree
+    +writePerms: adt.IntervalTree
+  }
+  
+  class adt.IntervalTree {
+    +Insert()
+    +Delete()
+    +Query()
+    +Len()
+  }
+}
+
+package "TLS 安全 TLS Security" {
+  class TLSInfo {
+    +CertFile: string
+    +KeyFile: string
+    +TrustedCAFile: string
+    +ClientCertAuth: bool
+    +CRLFile: string
+    +InsecureSkipVerify: bool
+    +ServerName: string
+    +CipherSuites: []uint16
+    +AllowedCN: string
+    +AllowedHostname: string
+    +Logger: *zap.Logger
+    +EmptyCN: bool
+  }
+}
+
+' 关系连接
+authStore --> AuthStore : 实现
+authStore --> User : 管理用户
+authStore --> Role : 管理角色
+authStore --> TokenProvider : 令牌提供者
+authStore --> unifiedRangePermissions : 权限缓存
+
+Role --> Permission : 包含权限
+Permission --> Permission_Type : 权限类型
+
+TokenProvider --> simpleTokenTTLKeeper : Simple Token 实现
+TokenProvider --> jwtTokenProvider : JWT Token 实现
+TokenProvider --> AuthInfo : 生成认证信息
+
+unifiedRangePermissions --> adt.IntervalTree : 区间树存储
+
+' RBAC 关系图
+package "RBAC 模型 RBAC Model" {
+  class "用户 Users" as Users {
+    +root
+    +alice
+    +bob
+  }
+  
+  class "角色 Roles" as Roles {
+    +admin
+    +readonly
+    +readwrite
+  }
+  
+  class "权限 Permissions" as Permissions {
+    +read /config/*
+    +write /config/*
+    +read /data/*
+    +write /data/*
+  }
+}
+
+Users ||--o{ Roles : 用户分配角色
+Roles ||--o{ Permissions : 角色包含权限
+
+note right of authStore
+  认证存储核心
+  - 用户和角色管理
+  - 权限检查
+  - 令牌验证
+  - 缓存优化
+end note
+
+note right of simpleTokenTTLKeeper
+  简单令牌管理
+  - TTL 过期管理
+  - 内存存储
+  - 定时清理
+  - 快速验证
+end note
+
+note right of jwtTokenProvider
+  JWT 令牌管理
+  - 数字签名验证
+  - 无状态设计
+  - 标准兼容
+  - 安全可靠
+end note
+
+note right of unifiedRangePermissions
+  权限缓存优化
+  - 区间树存储
+  - 快速查找
+  - 范围权限
+  - 内存高效
+end note
+
+@enduml

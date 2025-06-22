@@ -1,0 +1,450 @@
+@startuml api-service-structure-code
+!theme plain
+title etcd API 服务结构图 - 代码实现位置
+
+package "gRPC 服务定义 gRPC Services" {
+  interface KVServer {
+    +Range(): (*RangeResponse, error)
+    +Put(): (*PutResponse, error)
+    +DeleteRange(): (*DeleteRangeResponse, error)
+    +Txn(): (*TxnResponse, error)
+    +Compact(): (*CompactionResponse, error)
+    --
+    📁 api/etcdserverpb/rpc.proto:KV
+    📁 server/etcdserver/api/v3rpc/key.go:kvServer
+    📁 server/etcdserver/api/v3rpc/key.go:(*kvServer).Range()
+    📁 server/etcdserver/api/v3rpc/key.go:(*kvServer).Put()
+    📁 server/etcdserver/api/v3rpc/key.go:(*kvServer).Txn()
+  }
+  
+  interface WatchServer {
+    +Watch(): (Watch_WatchServer, error)
+    --
+    📁 api/etcdserverpb/rpc.proto:Watch
+    📁 server/etcdserver/api/v3rpc/watch.go:watchServer
+    📁 server/etcdserver/api/v3rpc/watch.go:(*watchServer).Watch()
+  }
+  
+  interface LeaseServer {
+    +LeaseGrant(): (*LeaseGrantResponse, error)
+    +LeaseRevoke(): (*LeaseRevokeResponse, error)
+    +LeaseKeepAlive(): (Lease_LeaseKeepAliveServer, error)
+    +LeaseTimeToLive(): (*LeaseTimeToLiveResponse, error)
+    +LeaseLeases(): (*LeaseLeasesResponse, error)
+    --
+    📁 api/etcdserverpb/rpc.proto:Lease
+    📁 server/etcdserver/api/v3rpc/lease.go:LeaseServer
+    📁 server/etcdserver/api/v3rpc/lease.go:(*LeaseServer).LeaseGrant()
+    📁 server/etcdserver/api/v3rpc/lease.go:(*LeaseServer).LeaseKeepAlive()
+  }
+  
+  interface AuthServer {
+    +AuthEnable(): (*AuthEnableResponse, error)
+    +AuthDisable(): (*AuthDisableResponse, error)
+    +Authenticate(): (*AuthenticateResponse, error)
+    +UserAdd(): (*AuthUserAddResponse, error)
+    +UserGet(): (*AuthUserGetResponse, error)
+    +UserList(): (*AuthUserListResponse, error)
+    +UserDelete(): (*AuthUserDeleteResponse, error)
+    +UserChangePassword(): (*AuthUserChangePasswordResponse, error)
+    +UserGrantRole(): (*AuthUserGrantRoleResponse, error)
+    +UserRevokeRole(): (*AuthUserRevokeRoleResponse, error)
+    +RoleAdd(): (*AuthRoleAddResponse, error)
+    +RoleGet(): (*AuthRoleGetResponse, error)
+    +RoleList(): (*AuthRoleListResponse, error)
+    +RoleDelete(): (*AuthRoleDeleteResponse, error)
+    +RoleGrantPermission(): (*AuthRoleGrantPermissionResponse, error)
+    +RoleRevokePermission(): (*AuthRoleRevokePermissionResponse, error)
+    --
+    📁 api/etcdserverpb/rpc.proto:Auth
+    📁 server/etcdserver/api/v3rpc/auth.go:AuthServer
+    📁 server/etcdserver/api/v3rpc/auth.go:(*AuthServer).Authenticate()
+    📁 server/etcdserver/api/v3rpc/auth.go:(*AuthServer).UserAdd()
+  }
+  
+  interface ClusterServer {
+    +MemberAdd(): (*MemberAddResponse, error)
+    +MemberRemove(): (*MemberRemoveResponse, error)
+    +MemberUpdate(): (*MemberUpdateResponse, error)
+    +MemberList(): (*MemberListResponse, error)
+    +MemberPromote(): (*MemberPromoteResponse, error)
+    --
+    📁 api/etcdserverpb/rpc.proto:Cluster
+    📁 server/etcdserver/api/v3rpc/cluster.go:ClusterServer
+    📁 server/etcdserver/api/v3rpc/cluster.go:(*ClusterServer).MemberAdd()
+    📁 server/etcdserver/api/v3rpc/cluster.go:(*ClusterServer).MemberList()
+  }
+  
+  interface MaintenanceServer {
+    +Alarm(): (*AlarmResponse, error)
+    +Status(): (*StatusResponse, error)
+    +Defragment(): (*DefragmentResponse, error)
+    +Hash(): (*HashResponse, error)
+    +HashKV(): (*HashKVResponse, error)
+    +Snapshot(): (Maintenance_SnapshotServer, error)
+    +MoveLeader(): (*MoveLeaderResponse, error)
+    --
+    📁 api/etcdserverpb/rpc.proto:Maintenance
+    📁 server/etcdserver/api/v3rpc/maintenance.go:MaintenanceServer
+    📁 server/etcdserver/api/v3rpc/maintenance.go:(*MaintenanceServer).Status()
+    📁 server/etcdserver/api/v3rpc/maintenance.go:(*MaintenanceServer).Snapshot()
+  }
+}
+
+package "服务实现 Service Implementation" {
+  class kvServer {
+    +hdr: header
+    +kv: etcdserver.RaftKV
+    +lessor: lease.Lessor
+    +maxTxnOps: uint
+    --
+    📁 server/etcdserver/api/v3rpc/key.go:kvServer
+    📁 server/etcdserver/api/v3rpc/key.go:(*kvServer).Range()
+    📁 server/etcdserver/api/v3rpc/key.go:(*kvServer).Put()
+    📁 server/etcdserver/api/v3rpc/key.go:(*kvServer).DeleteRange()
+    📁 server/etcdserver/api/v3rpc/key.go:(*kvServer).Txn()
+    📁 server/etcdserver/api/v3rpc/key.go:(*kvServer).Compact()
+  }
+  
+  class watchServer {
+    +lg: *zap.Logger
+    +clusterID: types.ID
+    +memberID: types.ID
+    +maxRequestBytes: int
+    +sg: etcdserver.RaftStatusGetter
+    +watchable: mvcc.WatchableKV
+    +ag: AuthGetter
+    --
+    📁 server/etcdserver/api/v3rpc/watch.go:watchServer
+    📁 server/etcdserver/api/v3rpc/watch.go:(*watchServer).Watch()
+    📁 server/etcdserver/api/v3rpc/watch.go:(*watchServer).recvLoop()
+    📁 server/etcdserver/api/v3rpc/watch.go:(*watchServer).sendLoop()
+  }
+  
+  class leaseServer {
+    +hdr: header
+    +le: etcdserver.Lessor
+    +lg: *zap.Logger
+    --
+    📁 server/etcdserver/api/v3rpc/lease.go:LeaseServer
+    📁 server/etcdserver/api/v3rpc/lease.go:(*LeaseServer).LeaseGrant()
+    📁 server/etcdserver/api/v3rpc/lease.go:(*LeaseServer).LeaseRevoke()
+    📁 server/etcdserver/api/v3rpc/lease.go:(*LeaseServer).LeaseKeepAlive()
+    📁 server/etcdserver/api/v3rpc/lease.go:(*LeaseServer).LeaseTimeToLive()
+  }
+  
+  class authServer {
+    +hdr: header
+    +as: etcdserver.AuthServer
+    +lg: *zap.Logger
+    --
+    📁 server/etcdserver/api/v3rpc/auth.go:AuthServer
+    📁 server/etcdserver/api/v3rpc/auth.go:(*AuthServer).AuthEnable()
+    📁 server/etcdserver/api/v3rpc/auth.go:(*AuthServer).Authenticate()
+    📁 server/etcdserver/api/v3rpc/auth.go:(*AuthServer).UserAdd()
+    📁 server/etcdserver/api/v3rpc/auth.go:(*AuthServer).RoleAdd()
+  }
+  
+  class clusterServer {
+    +hdr: header
+    +cluster: etcdserver.Cluster
+    +lg: *zap.Logger
+    --
+    📁 server/etcdserver/api/v3rpc/cluster.go:ClusterServer
+    📁 server/etcdserver/api/v3rpc/cluster.go:(*ClusterServer).MemberAdd()
+    📁 server/etcdserver/api/v3rpc/cluster.go:(*ClusterServer).MemberRemove()
+    📁 server/etcdserver/api/v3rpc/cluster.go:(*ClusterServer).MemberList()
+  }
+  
+  class maintenanceServer {
+    +lg: *zap.Logger
+    +rg: etcdserver.RaftStatusGetter
+    +hasher: mvcc.HashStorage
+    +bg: etcdserver.BackendGetter
+    +a: auth.AuthStore
+    --
+    📁 server/etcdserver/api/v3rpc/maintenance.go:MaintenanceServer
+    📁 server/etcdserver/api/v3rpc/maintenance.go:(*MaintenanceServer).Alarm()
+    📁 server/etcdserver/api/v3rpc/maintenance.go:(*MaintenanceServer).Status()
+    📁 server/etcdserver/api/v3rpc/maintenance.go:(*MaintenanceServer).Defragment()
+    📁 server/etcdserver/api/v3rpc/maintenance.go:(*MaintenanceServer).Snapshot()
+  }
+}
+
+package "装饰器模式 Decorator Pattern" {
+  class quotaKVServer {
+    +KVServer
+    +qa: quotaAlarmer
+    --
+    📁 server/etcdserver/api/v3rpc/quota.go:quotaKVServer
+    📁 server/etcdserver/api/v3rpc/quota.go:(*quotaKVServer).Put()
+    📁 server/etcdserver/api/v3rpc/quota.go:(*quotaKVServer).Txn()
+    📁 server/etcdserver/api/v3rpc/quota.go:(*quotaKVServer).checkQuota()
+  }
+  
+  class authKVServer {
+    +KVServer
+    +as: etcdserver.AuthServer
+    --
+    📁 server/etcdserver/api/v3rpc/auth.go:authKVServer
+    📁 server/etcdserver/api/v3rpc/auth.go:(*authKVServer).Range()
+    📁 server/etcdserver/api/v3rpc/auth.go:(*authKVServer).Put()
+    📁 server/etcdserver/api/v3rpc/auth.go:(*authKVServer).DeleteRange()
+    📁 server/etcdserver/api/v3rpc/auth.go:(*authKVServer).checkAuth()
+  }
+  
+  class quotaLeaseServer {
+    +LeaseServer
+    +qa: quotaAlarmer
+    --
+    📁 server/etcdserver/api/v3rpc/quota.go:quotaLeaseServer
+    📁 server/etcdserver/api/v3rpc/quota.go:(*quotaLeaseServer).LeaseGrant()
+  }
+  
+  class authLeaseServer {
+    +LeaseServer
+    +as: etcdserver.AuthServer
+    --
+    📁 server/etcdserver/api/v3rpc/auth.go:authLeaseServer
+    📁 server/etcdserver/api/v3rpc/auth.go:(*authLeaseServer).LeaseGrant()
+    📁 server/etcdserver/api/v3rpc/auth.go:(*authLeaseServer).LeaseRevoke()
+  }
+}
+
+package "HTTP 网关 HTTP Gateway" {
+  class grpcGateway {
+    +mux: *runtime.ServeMux
+    +conn: *grpc.ClientConn
+    +RegisterKVHandler()
+    +RegisterWatchHandler()
+    +RegisterLeaseHandler()
+    +RegisterAuthHandler()
+    +RegisterClusterHandler()
+    +RegisterMaintenanceHandler()
+    --
+    📁 server/etcdserver/api/v3rpc/grpc.go:Server()
+    📁 api/etcdserverpb/rpc.pb.gw.go:RegisterKVHandlerFromEndpoint()
+    📁 api/etcdserverpb/rpc.pb.gw.go:RegisterWatchHandlerFromEndpoint()
+    📁 api/etcdserverpb/rpc.pb.gw.go:RegisterLeaseHandlerFromEndpoint()
+    📁 github.com/grpc-ecosystem/grpc-gateway/v2/runtime
+  }
+}
+
+package "消息类型 Message Types" {
+  class RangeRequest {
+    +key: []byte
+    +range_end: []byte
+    +limit: int64
+    +revision: int64
+    +sort_order: SortOrder
+    +sort_target: SortTarget
+    +serializable: bool
+    +keys_only: bool
+    +count_only: bool
+    +min_mod_revision: int64
+    +max_mod_revision: int64
+    +min_create_revision: int64
+    +max_create_revision: int64
+    --
+    📁 api/etcdserverpb/rpc.proto:RangeRequest
+  }
+  
+  class PutRequest {
+    +key: []byte
+    +value: []byte
+    +lease: int64
+    +prev_kv: bool
+    +ignore_value: bool
+    +ignore_lease: bool
+    --
+    📁 api/etcdserverpb/rpc.proto:PutRequest
+  }
+  
+  class TxnRequest {
+    +compare: []Compare
+    +success: []RequestOp
+    +failure: []RequestOp
+    --
+    📁 api/etcdserverpb/rpc.proto:TxnRequest
+  }
+  
+  class WatchRequest {
+    +create_request: WatchCreateRequest
+    +cancel_request: WatchCancelRequest
+    +progress_request: WatchProgressRequest
+    --
+    📁 api/etcdserverpb/rpc.proto:WatchRequest
+  }
+  
+  class LeaseGrantRequest {
+    +TTL: int64
+    +ID: int64
+    --
+    📁 api/etcdserverpb/rpc.proto:LeaseGrantRequest
+  }
+}
+
+package "响应头 Response Header" {
+  class ResponseHeader {
+    +cluster_id: uint64
+    +member_id: uint64
+    +revision: int64
+    +raft_term: uint64
+    --
+    📁 api/etcdserverpb/rpc.proto:ResponseHeader
+  }
+  
+  class header {
+    +clusterID: types.ID
+    +memberID: types.ID
+    +sg: etcdserver.RaftStatusGetter
+    +rev: func() int64
+    +fill()
+    --
+    📁 server/etcdserver/api/v3rpc/header.go:header
+    📁 server/etcdserver/api/v3rpc/header.go:(*header).fill()
+  }
+}
+
+' 关系连接
+kvServer --> KVServer : 实现\n📁 v3rpc/key.go
+watchServer --> WatchServer : 实现\n📁 v3rpc/watch.go
+leaseServer --> LeaseServer : 实现\n📁 v3rpc/lease.go
+authServer --> AuthServer : 实现\n📁 v3rpc/auth.go
+clusterServer --> ClusterServer : 实现\n📁 v3rpc/cluster.go
+maintenanceServer --> MaintenanceServer : 实现\n📁 v3rpc/maintenance.go
+
+quotaKVServer --> KVServer : 装饰\n📁 v3rpc/quota.go
+authKVServer --> KVServer : 装饰\n📁 v3rpc/auth.go
+quotaLeaseServer --> LeaseServer : 装饰\n📁 v3rpc/quota.go
+authLeaseServer --> LeaseServer : 装饰\n📁 v3rpc/auth.go
+
+quotaKVServer --> kvServer : 包装\n📁 v3rpc/quota.go
+authKVServer --> quotaKVServer : 包装\n📁 v3rpc/auth.go
+
+grpcGateway --> KVServer : HTTP 转换\n📁 rpc.pb.gw.go
+grpcGateway --> WatchServer : HTTP 转换\n📁 rpc.pb.gw.go
+grpcGateway --> LeaseServer : HTTP 转换\n📁 rpc.pb.gw.go
+grpcGateway --> AuthServer : HTTP 转换\n📁 rpc.pb.gw.go
+grpcGateway --> ClusterServer : HTTP 转换\n📁 rpc.pb.gw.go
+grpcGateway --> MaintenanceServer : HTTP 转换\n📁 rpc.pb.gw.go
+
+kvServer --> header : 使用响应头\n📁 v3rpc/header.go
+leaseServer --> header : 使用响应头\n📁 v3rpc/header.go
+authServer --> header : 使用响应头\n📁 v3rpc/header.go
+clusterServer --> header : 使用响应头\n📁 v3rpc/header.go
+
+header --> ResponseHeader : 生成\n📁 api/etcdserverpb/rpc.proto
+
+note right of kvServer
+  KV 服务实现位置:
+  📁 server/etcdserver/api/v3rpc/key.go
+  
+  核心方法:
+  - Range(): 范围查询
+  - Put(): 存储键值
+  - DeleteRange(): 删除范围
+  - Txn(): 事务处理
+  - Compact(): 压缩操作
+  
+  依赖组件:
+  - etcdserver.RaftKV: Raft KV 接口
+  - lease.Lessor: 租约管理器
+  - header: 响应头生成器
+end note
+
+note right of watchServer
+  Watch 服务实现位置:
+  📁 server/etcdserver/api/v3rpc/watch.go
+  
+  核心方法:
+  - Watch(): 创建监听流
+  - recvLoop(): 接收循环
+  - sendLoop(): 发送循环
+  
+  流管理:
+  - serverWatchStream: 服务端流
+  - watchStream: 监听流
+  - 支持多路复用
+  - 事件过滤和分发
+end note
+
+note right of quotaKVServer
+  配额装饰器实现位置:
+  📁 server/etcdserver/api/v3rpc/quota.go
+  
+  功能:
+  - checkQuota(): 检查存储配额
+  - 拦截 Put 和 Txn 操作
+  - 防止存储空间耗尽
+  - 生成配额告警
+  
+  配额类型:
+  - 后端存储配额
+  - 请求大小限制
+end note
+
+note right of authKVServer
+  认证装饰器实现位置:
+  📁 server/etcdserver/api/v3rpc/auth.go
+  
+  功能:
+  - checkAuth(): 权限检查
+  - 拦截所有 KV 操作
+  - 验证用户权限
+  - 范围权限检查
+  
+  权限类型:
+  - 读权限检查
+  - 写权限检查
+  - 管理员权限检查
+end note
+
+note right of grpcGateway
+  HTTP 网关实现位置:
+  📁 server/etcdserver/api/v3rpc/grpc.go
+  📁 api/etcdserverpb/rpc.pb.gw.go
+  
+  依赖库:
+  📁 github.com/grpc-ecosystem/grpc-gateway/v2
+  
+  功能:
+  - gRPC 到 HTTP 转换
+  - RESTful API 支持
+  - JSON 序列化
+  - 跨域支持
+  - 自动生成的网关代码
+end note
+
+note as N1
+  gRPC 服务器创建流程:
+  
+  1. server/etcdserver/api/v3rpc/grpc.go:Server()
+     ↓
+  2. 创建各个服务实例:
+     - NewKVServer()
+     - NewWatchServer()
+     - NewLeaseServer()
+     - NewAuthServer()
+     - NewClusterServer()
+     - NewMaintenanceServer()
+     ↓
+  3. 应用装饰器:
+     - NewQuotaKVServer()
+     - NewAuthKVServer()
+     ↓
+  4. 注册到 gRPC 服务器:
+     - pb.RegisterKVServer()
+     - pb.RegisterWatchServer()
+     - pb.RegisterLeaseServer()
+     - pb.RegisterAuthServer()
+     - pb.RegisterClusterServer()
+     - pb.RegisterMaintenanceServer()
+  
+  拦截器:
+  📁 server/etcdserver/api/v3rpc/interceptor.go
+  - unaryInterceptor(): 一元 RPC 拦截器
+  - streamInterceptor(): 流式 RPC 拦截器
+end note
+
+@enduml

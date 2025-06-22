@@ -1,0 +1,193 @@
+@startuml storage-engine-architecture
+!theme plain
+title etcd 存储引擎架构图
+
+package "MVCC 多版本并发控制" {
+  class store {
+    +ReadView
+    +WriteView
+    +b: backend.Backend
+    +kvindex: index
+    +currentRev: int64
+    +compactMainRev: int64
+    +Put()
+    +Range()
+    +DeleteRange()
+    +Txn()
+    +Compact()
+  }
+  
+  interface ReadView {
+    +FirstRev(): int64
+    +Rev(): int64
+    +Range()
+  }
+  
+  interface WriteView {
+    +DeleteRange()
+    +Put()
+  }
+  
+  class watchableStore {
+    +store
+    +victims: []watcherBatch
+    +unsynced: watcherGroup
+    +synced: watcherGroup
+    +notify()
+    +syncWatchers()
+  }
+}
+
+package "索引管理 Index Management" {
+  interface index {
+    +Get(): *keyIndex
+    +Put()
+    +Restore()
+    +Range()
+    +Compact()
+  }
+  
+  class treeIndex {
+    +tree: *btree.BTree
+    +lg: *zap.Logger
+  }
+  
+  class keyIndex {
+    +key: []byte
+    +modified: revision
+    +generations: []generation
+  }
+  
+  class generation {
+    +ver: int64
+    +created: revision
+    +revs: []revision
+  }
+}
+
+package "后端存储 Backend Storage" {
+  interface Backend {
+    +ReadTx(): ReadTx
+    +BatchTx(): BatchTx
+    +ConcurrentReadTx(): ReadTx
+    +Snapshot(): Snapshot
+    +Hash(): uint32
+    +Size(): int64
+    +Defrag(): error
+    +Close(): error
+  }
+  
+  class backend {
+    +db: *bolt.DB
+    +batchTx: *batchTxBuffered
+    +readTx: *readTx
+    +batchInterval: time.Duration
+    +batchLimit: int
+    +hooks: Hooks
+  }
+  
+  interface BatchTx {
+    +Lock()
+    +Unlock()
+    +UnsafeCreateBucket()
+    +UnsafePut()
+    +UnsafeSeqPut()
+    +UnsafeDelete()
+    +Commit()
+  }
+  
+  class batchTxBuffered {
+    +batchTx
+    +buf: txWriteBuffer
+  }
+}
+
+package "WAL 预写日志" {
+  class WAL {
+    +dir: string
+    +metadata: []byte
+    +state: raftpb.HardState
+    +start: walpb.Snapshot
+    +decoder: *decoder
+    +encoder: *encoder
+    +Save()
+    +SaveSnapshot()
+    +ReadAll()
+  }
+  
+  class Record {
+    +Type: int64
+    +Crc: uint32
+    +Data: []byte
+  }
+}
+
+package "快照管理 Snapshot" {
+  class Snapshotter {
+    +dir: string
+    +Save()
+    +Load()
+    +LoadNewestAvailable()
+    +ReleaseSnapDBs()
+  }
+  
+  class Snapshot {
+    +Data: []byte
+    +Metadata: SnapshotMetadata
+  }
+}
+
+' 关系连接
+store --> ReadView : 实现
+store --> WriteView : 实现
+watchableStore --> store : 扩展
+
+store --> index : 使用索引
+treeIndex --> index : 实现
+treeIndex --> keyIndex : 管理
+keyIndex --> generation : 包含
+
+store --> Backend : 使用后端
+backend --> Backend : 实现
+backend --> BatchTx : 包含
+batchTxBuffered --> BatchTx : 实现
+
+backend --> WAL : 日志记录
+WAL --> Record : 写入记录
+
+backend --> Snapshotter : 快照管理
+Snapshotter --> Snapshot : 创建快照
+
+note right of store
+  MVCC 存储核心
+  - 多版本管理
+  - 事务支持
+  - 并发控制
+  - 历史查询
+end note
+
+note right of treeIndex
+  B+ 树索引
+  - 快速键查找
+  - 范围查询支持
+  - 版本信息管理
+  - 内存高效
+end note
+
+note right of backend
+  BoltDB 后端
+  - ACID 事务
+  - B+ 树存储
+  - 页面管理
+  - 并发读取
+end note
+
+note right of WAL
+  预写日志
+  - 数据持久性
+  - 故障恢复
+  - 顺序写入
+  - 校验和保护
+end note
+
+@enduml

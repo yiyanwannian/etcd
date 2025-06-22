@@ -1,0 +1,259 @@
+@startuml etcd-overall-architecture-code
+!theme plain
+title etcd 整体架构图 - 代码实现位置
+
+package "客户端层 Client Layer" {
+  [etcdctl 命令行工具] as CLI
+  note right of CLI
+    📁 etcdctl/ctlv3/
+    📁 etcdctl/ctlv3/command/
+    📁 etcdctl/main.go
+    
+    主要功能:
+    - 命令解析和执行
+    - 客户端 SDK 封装
+    - 输出格式化
+  end note
+  
+  [Client SDK] as SDK
+  note right of SDK
+    📁 client/v3/client.go
+    📁 client/v3/kv.go
+    📁 client/v3/watch.go
+    📁 client/v3/lease.go
+    📁 client/v3/auth.go
+    
+    核心接口:
+    - KV, Watcher, Lease
+    - Auth, Cluster, Maintenance
+  end note
+  
+  [HTTP 客户端] as HTTP
+  note right of HTTP
+    📁 client/v2/client.go
+    📁 client/v2/http.go
+    
+    HTTP API 客户端:
+    - RESTful 接口封装
+    - JSON 序列化
+  end note
+}
+
+package "API 网关层 API Gateway" {
+  [gRPC 服务器] as GRPC
+  note right of GRPC
+    📁 server/etcdserver/api/v3rpc/
+    📁 server/etcdserver/api/v3rpc/grpc.go
+    📁 server/etcdserver/api/v3rpc/interceptor.go
+    
+    服务实现:
+    - KVServer, WatchServer
+    - LeaseServer, AuthServer
+    - ClusterServer, MaintenanceServer
+  end note
+  
+  [REST 网关] as REST
+  note right of REST
+    📁 server/etcdserver/api/v3rpc/grpc.go
+    📁 github.com/grpc-ecosystem/grpc-gateway
+    
+    HTTP 到 gRPC 转换:
+    - REST API 端点映射
+    - JSON 与 Protobuf 转换
+  end note
+  
+  [认证模块] as AUTH
+  note right of AUTH
+    📁 server/auth/store.go
+    📁 server/auth/jwt.go
+    📁 server/auth/simple_token.go
+    
+    认证功能:
+    - 用户和角色管理
+    - 令牌生成和验证
+    - 权限检查
+  end note
+}
+
+package "核心服务层 Core Service" {
+  [EtcdServer 主服务] as ETCD
+  note right of ETCD
+    📁 server/etcdserver/server.go
+    📁 server/etcdserver/raft.go
+    📁 server/etcdserver/apply/
+    
+    核心功能:
+    - 请求处理和路由
+    - Raft 集成管理
+    - 状态机应用
+  end note
+  
+  [Raft 一致性引擎] as RAFT
+  note right of RAFT
+    📁 raft/raft.go
+    📁 raft/node.go
+    📁 raft/rawnode.go
+    📁 raft/log.go
+    
+    Raft 实现:
+    - 领导者选举
+    - 日志复制
+    - 状态机接口
+  end note
+  
+  [Apply 应用模块] as APPLY
+  note right of APPLY
+    📁 server/etcdserver/apply/apply.go
+    📁 server/etcdserver/apply/apply_v3.go
+    
+    状态机应用:
+    - Raft 日志应用
+    - MVCC 操作执行
+    - 响应生成
+  end note
+  
+  [集群管理器] as CLUSTER
+  note right of CLUSTER
+    📁 server/etcdserver/api/membership/
+    📁 server/etcdserver/api/membership/cluster.go
+    
+    集群管理:
+    - 成员添加/删除
+    - 配置变更
+    - 健康检查
+  end note
+}
+
+package "存储层 Storage Layer" {
+  [MVCC 引擎] as MVCC
+  note right of MVCC
+    📁 server/storage/mvcc/kvstore.go
+    📁 server/storage/mvcc/kvstore_txn.go
+    📁 server/storage/mvcc/watchable_store.go
+    📁 server/storage/mvcc/index.go
+    
+    MVCC 功能:
+    - 多版本存储
+    - 事务处理
+    - 索引管理
+    - Watch 机制
+  end note
+  
+  [Backend 后端存储] as BACKEND
+  note right of BACKEND
+    📁 server/storage/backend/backend.go
+    📁 server/storage/backend/batch_tx.go
+    📁 github.com/etcd-io/bbolt
+    
+    后端存储:
+    - BoltDB 封装
+    - 批量事务
+    - 数据持久化
+  end note
+  
+  [WAL 预写日志] as WAL
+  note right of WAL
+    📁 server/storage/wal/wal.go
+    📁 server/storage/wal/encoder.go
+    📁 server/storage/wal/decoder.go
+    
+    WAL 功能:
+    - 日志写入和读取
+    - 数据恢复
+    - 校验和验证
+  end note
+  
+  [Snapshot 快照] as SNAP
+  note right of SNAP
+    📁 server/storage/snap/snapshotter.go
+    📁 server/storage/snap/db.go
+    
+    快照管理:
+    - 快照创建和加载
+    - 数据压缩
+    - 增量备份
+  end note
+}
+
+package "基础设施层 Infrastructure" {
+  [Lease 租约管理] as LEASE
+  note right of LEASE
+    📁 server/lease/lessor.go
+    📁 server/lease/lease_queue.go
+    📁 server/lease/lease.go
+    
+    租约功能:
+    - 生命周期管理
+    - 过期检测
+    - 键值关联
+  end note
+  
+  [Watch 监听系统] as WATCH
+  note right of WATCH
+    📁 server/storage/mvcc/watcher.go
+    📁 server/storage/mvcc/watchable_store.go
+    📁 server/etcdserver/api/v3rpc/watch.go
+    
+    Watch 功能:
+    - 事件监听
+    - 流式推送
+    - 过滤机制
+  end note
+  
+  [Auth 权限系统] as AUTHSYS
+  note right of AUTHSYS
+    📁 server/auth/store.go
+    📁 server/auth/range_perm_cache.go
+    📁 server/etcdserver/api/v3rpc/auth.go
+    
+    权限系统:
+    - RBAC 模型
+    - 权限缓存
+    - 访问控制
+  end note
+}
+
+' 客户端到API层的连接
+CLI --> GRPC : gRPC 调用\n📁 client/v3/
+SDK --> GRPC : gRPC 调用\n📁 client/v3/
+HTTP --> REST : HTTP 请求\n📁 client/v2/
+REST --> GRPC : 转换为 gRPC\n📁 grpc-gateway
+
+' API层到核心层的连接
+GRPC --> AUTH : 认证检查\n📁 v3rpc/interceptor.go
+AUTH --> ETCD : 转发请求\n📁 server/etcdserver/
+ETCD --> RAFT : 一致性处理\n📁 server/etcdserver/raft.go
+ETCD --> APPLY : 应用操作\n📁 server/etcdserver/apply/
+ETCD --> CLUSTER : 集群管理\n📁 api/membership/
+
+' 核心层到存储层的连接
+RAFT --> WAL : 日志写入\n📁 raft/ → storage/wal/
+APPLY --> MVCC : 状态更新\n📁 apply/ → storage/mvcc/
+MVCC --> BACKEND : 数据持久化\n📁 mvcc/ → backend/
+RAFT --> SNAP : 快照创建\n📁 raft/ → storage/snap/
+
+' 基础设施连接
+ETCD --> LEASE : 租约管理\n📁 server/lease/
+ETCD --> WATCH : 事件监听\n📁 storage/mvcc/watcher.go
+ETCD --> AUTHSYS : 权限验证\n📁 server/auth/
+
+note bottom
+  代码实现位置说明:
+  
+  📁 表示主要源码文件路径
+  → 表示模块间的调用关系
+  
+  关键目录结构:
+  - server/: 服务端核心实现
+  - client/: 客户端 SDK 实现
+  - raft/: Raft 算法实现
+  - api/: API 定义和服务
+  - storage/: 存储引擎实现
+  
+  主要入口文件:
+  - server/etcdmain/main.go: 服务端启动
+  - etcdctl/main.go: 客户端工具
+  - client/v3/client.go: SDK 入口
+end note
+
+@enduml

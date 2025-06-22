@@ -1,0 +1,401 @@
+@startuml etcd-core-algorithms-datastructures
+!theme plain
+title etcd 核心算法与数据结构设计
+
+' ===== Raft 一致性算法核心 =====
+package "Raft 一致性算法 Raft Consensus Algorithm" {
+  
+  class "RaftCore" as RAFT_CORE {
+    -state: StateType
+    -term: uint64
+    -vote: uint64
+    -lead: uint64
+    -raftLog: *raftLog
+    -prs: tracker.ProgressTracker
+    +Step(m pb.Message)
+    +tick()
+    +campaign()
+    --
+    📁 raft/raft.go:raft
+    算法核心: Raft 状态机
+  }
+  
+  enum "StateType" as STATE_TYPE {
+    StateFollower
+    StateCandidate
+    StateLeader
+    StatePreCandidate
+    --
+    状态转换驱动算法执行
+  }
+  
+  class "RaftLog" as RAFT_LOG {
+    -storage: Storage
+    -unstable: unstable
+    -committed: uint64
+    -applied: uint64
+    +append(ents ...pb.Entry)
+    +maybeAppend()
+    +findConflict()
+    --
+    📁 raft/log.go:raftLog
+    数据结构: 分段日志存储
+  }
+  
+  class "ProgressTracker" as PROGRESS_TRACKER {
+    -prs: map[uint64]*Progress
+    -votes: map[uint64]bool
+    -maxInflight: int
+    +RecordVote()
+    +TallyVotes()
+    --
+    📁 raft/tracker/progress.go
+    算法优化: 流控和进度跟踪
+  }
+  
+  RAFT_CORE --> STATE_TYPE : 状态管理
+  RAFT_CORE --> RAFT_LOG : 日志管理
+  RAFT_CORE --> PROGRESS_TRACKER : 进度跟踪
+  
+  note right of RAFT_CORE
+    Raft 算法设计要点:
+    
+    1. 强领导者模型
+       - 所有写操作通过 Leader
+       - 简化一致性保证
+    
+    2. 领导者选举
+       - 随机超时避免分票
+       - 任期号单调递增
+    
+    3. 日志复制
+       - 顺序一致性保证
+       - 多数派确认提交
+    
+    4. 安全性保证
+       - 选举安全性
+       - 日志匹配性
+       - 领导者完整性
+  end note
+}
+
+' ===== MVCC 多版本并发控制 =====
+package "MVCC 存储引擎 MVCC Storage Engine" {
+  
+  class "MVCCStore" as MVCC_STORE {
+    -kvindex: index
+    -backend: backend.Backend
+    -currentRev: int64
+    -compactMainRev: int64
+    +Put(key, value []byte, lease LeaseID)
+    +Range(key, end []byte, ro RangeOptions)
+    +DeleteRange(key, end []byte)
+    --
+    📁 server/storage/mvcc/kvstore.go:store
+    核心: 多版本存储引擎
+  }
+  
+  class "TreeIndex" as TREE_INDEX {
+    -tree: *btree.BTree
+    -lg: *zap.Logger
+    +Get(key []byte): *keyIndex
+    +Put(key []byte, rev revision)
+    +Range(key, end []byte): [][]byte
+    +Compact(rev int64)
+    --
+    📁 server/storage/mvcc/index.go:treeIndex
+    数据结构: B+ 树索引
+  }
+  
+  class "KeyIndex" as KEY_INDEX {
+    -key: []byte
+    -modified: revision
+    -generations: []generation
+    +put(rev revision)
+    +get(atRev int64): *revision
+    +tombstone(rev revision)
+    --
+    📁 server/storage/mvcc/key_index.go:keyIndex
+    数据结构: 键版本链表
+  }
+  
+  class "Generation" as GENERATION {
+    -ver: int64
+    -created: revision
+    -revs: []revision
+    +walk(f func(rev revision) bool)
+    +isEmpty(): bool
+    --
+    📁 server/storage/mvcc/key_index.go:generation
+    数据结构: 版本代管理
+  }
+  
+  class "Revision" as REVISION {
+    -main: int64
+    -sub: int64
+    +GreaterThan(b revision): bool
+    +String(): string
+    --
+    📁 server/storage/mvcc/revision.go:revision
+    数据结构: 逻辑时钟
+  }
+  
+  MVCC_STORE --> TREE_INDEX : 索引管理
+  TREE_INDEX --> KEY_INDEX : 键索引
+  KEY_INDEX --> GENERATION : 版本代
+  GENERATION --> REVISION : 版本号
+  
+  note right of MVCC_STORE
+    MVCC 设计要点:
+    
+    1. 版本号设计
+       - 全局递增版本号
+       - 逻辑时钟保证顺序
+    
+    2. 索引结构
+       - B+ 树快速查找
+       - 版本链表历史查询
+    
+    3. 并发控制
+       - 读不阻塞写
+       - 写不阻塞读
+       - 快照隔离级别
+    
+    4. 空间管理
+       - 定期压缩历史版本
+       - 墓碑标记删除
+  end note
+}
+
+' ===== Watch 事件系统 =====
+package "Watch 事件系统 Watch Event System" {
+  
+  class "WatchableStore" as WATCHABLE_STORE {
+    -store: *store
+    -synced: watcherGroup
+    -unsynced: watcherGroup
+    -victims: []watcherBatch
+    +watch(key, end []byte, startRev int64): *watcher
+    +notify(rev int64, evs []mvccpb.Event)
+    +syncWatchers(): int
+    --
+    📁 server/storage/mvcc/watchable_store.go:watchableStore
+    设计模式: 观察者模式
+  }
+  
+  class "WatcherGroup" as WATCHER_GROUP {
+    -keyWatchers: map[string]watcherSet
+    -ranges: adt.IntervalTree
+    +add(wa *watcher)
+    +delete(wa *watcher)
+    +choose(maxWatchers int): watcherSet
+    --
+    📁 server/storage/mvcc/watcher_group.go:watcherGroup
+    数据结构: 区间树优化
+  }
+  
+  class "Watcher" as WATCHER {
+    -key: []byte
+    -end: []byte
+    -minRev: int64
+    -id: WatchID
+    -ch: chan<- WatchResponse
+    -fcs: []FilterFunc
+    +send(wr WatchResponse): bool
+    --
+    📁 server/storage/mvcc/watcher.go:watcher
+    核心: 事件监听器
+  }
+  
+  class "IntervalTree" as INTERVAL_TREE {
+    +Insert(item Item)
+    +Delete(item Item)
+    +Query(r Interval): []Item
+    --
+    📁 github.com/google/btree
+    算法: 区间树范围查询
+  }
+  
+  WATCHABLE_STORE --> WATCHER_GROUP : 分组管理
+  WATCHER_GROUP --> WATCHER : 监听器
+  WATCHER_GROUP --> INTERVAL_TREE : 范围查询
+  
+  note right of WATCHABLE_STORE
+    Watch 系统设计要点:
+    
+    1. 事件分发
+       - 异步事件通知
+       - 批量事件处理
+    
+    2. 性能优化
+       - 区间树范围查询
+       - 监听器分组管理
+    
+    3. 背压控制
+       - 慢消费者隔离
+       - 受害者机制
+    
+    4. 过滤机制
+       - 客户端过滤器
+       - 减少网络传输
+  end note
+}
+
+' ===== Lease 租约系统 =====
+package "Lease 租约系统 Lease Management System" {
+  
+  class "Lessor" as LESSOR {
+    -leaseMap: map[LeaseID]*Lease
+    -leaseExpiredNotifier: *LeaseExpiredNotifier
+    -leaseCheckpointHeap: LeaseQueue
+    +Grant(id LeaseID, ttl int64): *Lease
+    +Revoke(id LeaseID): error
+    +Renew(id LeaseID): int64
+    +runLoop()
+    --
+    📁 server/lease/lessor.go:lessor
+    核心: 租约生命周期管理
+  }
+  
+  class "LeaseQueue" as LEASE_QUEUE {
+    -array: []*LeaseWithTime
+    -idxMap: map[LeaseID]int
+    +RegisterOrUpdate(item *LeaseWithTime)
+    +Poll(): *LeaseWithTime
+    +heapifyUp(j int)
+    +heapifyDown(i int)
+    --
+    📁 server/lease/lease_queue.go:leaseQueue
+    数据结构: 最小堆
+  }
+  
+  class "Lease" as LEASE {
+    -ID: LeaseID
+    -ttl: int64
+    -remainingTTL: int64
+    -expiryTime: time.Time
+    -itemSet: map[LeaseItem]struct{}
+    +expired(): bool
+    +Keys(): []string
+    --
+    📁 server/lease/lease.go:Lease
+    数据结构: 租约对象
+  }
+  
+  LESSOR --> LEASE_QUEUE : 过期管理
+  LESSOR --> LEASE : 租约管理
+  LEASE_QUEUE --> LEASE : 堆元素
+  
+  note right of LESSOR
+    Lease 系统设计要点:
+    
+    1. 时间管理
+       - 最小堆管理过期时间
+       - 高效的过期检测
+    
+    2. 生命周期
+       - 创建、续期、撤销
+       - 自动过期处理
+    
+    3. 键值关联
+       - 租约绑定键值对
+       - 级联删除机制
+    
+    4. 检查点机制
+       - 定期持久化状态
+       - 故障恢复支持
+  end note
+}
+
+' ===== 网络传输优化 =====
+package "网络传输 Network Transport" {
+  
+  class "Transport" as TRANSPORT {
+    -peers: map[types.ID]Peer
+    -pipelineRt: http.RoundTripper
+    -streamRt: http.RoundTripper
+    +Send(msgs []raftpb.Message)
+    +AddPeer(id types.ID, urls []string)
+    --
+    📁 server/etcdserver/api/rafthttp/transport.go:Transport
+    设计: 多策略传输
+  }
+  
+  class "Pipeline" as PIPELINE {
+    -peerID: types.ID
+    -tr: *Transport
+    -msgc: chan raftpb.Message
+    -wg: sync.WaitGroup
+    +handle()
+    +post(data []byte)
+    --
+    📁 server/etcdserver/api/rafthttp/pipeline.go:pipeline
+    策略: 批量传输
+  }
+  
+  class "Stream" as STREAM {
+    -peerID: types.ID
+    -msgAppV2Writer: *streamWriter
+    -msgAppV2Reader: *streamReader
+    +run()
+    +write()
+    +read()
+    --
+    📁 server/etcdserver/api/rafthttp/stream.go
+    策略: 流式传输
+  }
+  
+  TRANSPORT --> PIPELINE : 批量消息
+  TRANSPORT --> STREAM : 频繁消息
+  
+  note right of TRANSPORT
+    网络传输设计要点:
+    
+    1. 传输策略
+       - Pipeline: 批量消息
+       - Stream: 频繁小消息
+       - Snapshot: 大文件传输
+    
+    2. 性能优化
+       - 连接复用
+       - 批量发送
+       - 压缩传输
+    
+    3. 容错机制
+       - 自动重连
+       - 超时处理
+       - 错误恢复
+  end note
+}
+
+' ===== 算法复杂度分析 =====
+note as COMPLEXITY_ANALYSIS
+  核心算法复杂度分析:
+  
+  🔍 查询操作:
+  - 点查询: O(log n) - B+ 树查找
+  - 范围查询: O(log n + k) - k 为结果数量
+  - 历史查询: O(log n + m) - m 为版本数量
+  
+  ✏️ 写入操作:
+  - 单点写入: O(log n) - 索引更新
+  - 批量写入: O(k log n) - k 个操作
+  - 事务写入: O(k log n) - 原子性保证
+  
+  👀 Watch 操作:
+  - 注册监听: O(log n) - 区间树插入
+  - 事件分发: O(k) - k 为监听器数量
+  - 范围监听: O(log n + k) - 区间查询
+  
+  ⏰ Lease 操作:
+  - 创建租约: O(log n) - 堆插入
+  - 续期租约: O(log n) - 堆调整
+  - 过期检查: O(1) - 堆顶查看
+  
+  🔄 Raft 操作:
+  - 日志追加: O(1) - 顺序写入
+  - 日志复制: O(m) - m 为节点数量
+  - 选举投票: O(m) - 广播投票
+end note
+
+@enduml

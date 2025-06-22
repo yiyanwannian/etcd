@@ -1,0 +1,298 @@
+@startuml api-service-structure
+!theme plain
+title etcd API 服务结构图
+
+package "gRPC 服务定义 gRPC Services" {
+  interface KVServer {
+    +Range(): (*RangeResponse, error)
+    +Put(): (*PutResponse, error)
+    +DeleteRange(): (*DeleteRangeResponse, error)
+    +Txn(): (*TxnResponse, error)
+    +Compact(): (*CompactionResponse, error)
+  }
+  
+  interface WatchServer {
+    +Watch(): (Watch_WatchServer, error)
+  }
+  
+  interface LeaseServer {
+    +LeaseGrant(): (*LeaseGrantResponse, error)
+    +LeaseRevoke(): (*LeaseRevokeResponse, error)
+    +LeaseKeepAlive(): (Lease_LeaseKeepAliveServer, error)
+    +LeaseTimeToLive(): (*LeaseTimeToLiveResponse, error)
+    +LeaseLeases(): (*LeaseLeasesResponse, error)
+  }
+  
+  interface AuthServer {
+    +AuthEnable(): (*AuthEnableResponse, error)
+    +AuthDisable(): (*AuthDisableResponse, error)
+    +Authenticate(): (*AuthenticateResponse, error)
+    +UserAdd(): (*AuthUserAddResponse, error)
+    +UserGet(): (*AuthUserGetResponse, error)
+    +UserList(): (*AuthUserListResponse, error)
+    +UserDelete(): (*AuthUserDeleteResponse, error)
+    +UserChangePassword(): (*AuthUserChangePasswordResponse, error)
+    +UserGrantRole(): (*AuthUserGrantRoleResponse, error)
+    +UserRevokeRole(): (*AuthUserRevokeRoleResponse, error)
+    +RoleAdd(): (*AuthRoleAddResponse, error)
+    +RoleGet(): (*AuthRoleGetResponse, error)
+    +RoleList(): (*AuthRoleListResponse, error)
+    +RoleDelete(): (*AuthRoleDeleteResponse, error)
+    +RoleGrantPermission(): (*AuthRoleGrantPermissionResponse, error)
+    +RoleRevokePermission(): (*AuthRoleRevokePermissionResponse, error)
+  }
+  
+  interface ClusterServer {
+    +MemberAdd(): (*MemberAddResponse, error)
+    +MemberRemove(): (*MemberRemoveResponse, error)
+    +MemberUpdate(): (*MemberUpdateResponse, error)
+    +MemberList(): (*MemberListResponse, error)
+    +MemberPromote(): (*MemberPromoteResponse, error)
+  }
+  
+  interface MaintenanceServer {
+    +Alarm(): (*AlarmResponse, error)
+    +Status(): (*StatusResponse, error)
+    +Defragment(): (*DefragmentResponse, error)
+    +Hash(): (*HashResponse, error)
+    +HashKV(): (*HashKVResponse, error)
+    +Snapshot(): (Maintenance_SnapshotServer, error)
+    +MoveLeader(): (*MoveLeaderResponse, error)
+  }
+}
+
+package "服务实现 Service Implementation" {
+  class kvServer {
+    +hdr: header
+    +kv: etcdserver.RaftKV
+    +lessor: lease.Lessor
+    +maxTxnOps: uint
+  }
+  
+  class watchServer {
+    +lg: *zap.Logger
+    +clusterID: types.ID
+    +memberID: types.ID
+    +maxRequestBytes: int
+    +sg: etcdserver.RaftStatusGetter
+    +watchable: mvcc.WatchableKV
+    +ag: AuthGetter
+  }
+  
+  class leaseServer {
+    +hdr: header
+    +le: etcdserver.Lessor
+    +lg: *zap.Logger
+  }
+  
+  class authServer {
+    +hdr: header
+    +as: etcdserver.AuthServer
+    +lg: *zap.Logger
+  }
+  
+  class clusterServer {
+    +hdr: header
+    +cluster: etcdserver.Cluster
+    +lg: *zap.Logger
+  }
+  
+  class maintenanceServer {
+    +lg: *zap.Logger
+    +rg: etcdserver.RaftStatusGetter
+    +hasher: mvcc.HashStorage
+    +bg: etcdserver.BackendGetter
+    +a: auth.AuthStore
+  }
+}
+
+package "装饰器模式 Decorator Pattern" {
+  class quotaKVServer {
+    +KVServer
+    +qa: quotaAlarmer
+  }
+  
+  class authKVServer {
+    +KVServer
+    +as: etcdserver.AuthServer
+  }
+  
+  class quotaLeaseServer {
+    +LeaseServer
+    +qa: quotaAlarmer
+  }
+  
+  class authLeaseServer {
+    +LeaseServer
+    +as: etcdserver.AuthServer
+  }
+}
+
+package "HTTP 网关 HTTP Gateway" {
+  class grpcGateway {
+    +mux: *runtime.ServeMux
+    +conn: *grpc.ClientConn
+    +RegisterKVHandler()
+    +RegisterWatchHandler()
+    +RegisterLeaseHandler()
+    +RegisterAuthHandler()
+    +RegisterClusterHandler()
+    +RegisterMaintenanceHandler()
+  }
+}
+
+package "消息类型 Message Types" {
+  class RangeRequest {
+    +key: []byte
+    +range_end: []byte
+    +limit: int64
+    +revision: int64
+    +sort_order: SortOrder
+    +sort_target: SortTarget
+    +serializable: bool
+    +keys_only: bool
+    +count_only: bool
+    +min_mod_revision: int64
+    +max_mod_revision: int64
+    +min_create_revision: int64
+    +max_create_revision: int64
+  }
+  
+  class PutRequest {
+    +key: []byte
+    +value: []byte
+    +lease: int64
+    +prev_kv: bool
+    +ignore_value: bool
+    +ignore_lease: bool
+  }
+  
+  class TxnRequest {
+    +compare: []Compare
+    +success: []RequestOp
+    +failure: []RequestOp
+  }
+  
+  class WatchRequest {
+    +create_request: WatchCreateRequest
+    +cancel_request: WatchCancelRequest
+    +progress_request: WatchProgressRequest
+  }
+  
+  class LeaseGrantRequest {
+    +TTL: int64
+    +ID: int64
+  }
+}
+
+package "响应头 Response Header" {
+  class ResponseHeader {
+    +cluster_id: uint64
+    +member_id: uint64
+    +revision: int64
+    +raft_term: uint64
+  }
+  
+  class header {
+    +clusterID: types.ID
+    +memberID: types.ID
+    +sg: etcdserver.RaftStatusGetter
+    +rev: func() int64
+    +fill()
+  }
+}
+
+' 关系连接
+kvServer --> KVServer : 实现
+watchServer --> WatchServer : 实现
+leaseServer --> LeaseServer : 实现
+authServer --> AuthServer : 实现
+clusterServer --> ClusterServer : 实现
+maintenanceServer --> MaintenanceServer : 实现
+
+quotaKVServer --> KVServer : 装饰
+authKVServer --> KVServer : 装饰
+quotaLeaseServer --> LeaseServer : 装饰
+authLeaseServer --> LeaseServer : 装饰
+
+quotaKVServer --> kvServer : 包装
+authKVServer --> quotaKVServer : 包装
+
+grpcGateway --> KVServer : HTTP 转换
+grpcGateway --> WatchServer : HTTP 转换
+grpcGateway --> LeaseServer : HTTP 转换
+grpcGateway --> AuthServer : HTTP 转换
+grpcGateway --> ClusterServer : HTTP 转换
+grpcGateway --> MaintenanceServer : HTTP 转换
+
+kvServer --> header : 使用响应头
+leaseServer --> header : 使用响应头
+authServer --> header : 使用响应头
+clusterServer --> header : 使用响应头
+
+header --> ResponseHeader : 生成
+
+' API 调用流程
+participant "客户端\nClient" as C
+participant "gRPC 网关\nGRPC Gateway" as G
+participant "认证装饰器\nAuth Decorator" as A
+participant "配额装饰器\nQuota Decorator" as Q
+participant "KV 服务器\nKV Server" as K
+participant "EtcdServer" as E
+
+== KV 操作流程 KV Operation Flow ==
+C -> G : Put Request
+activate G
+G -> A : 认证检查\nAuth Check
+activate A
+A -> A : 验证令牌\nValidate Token
+A -> A : 检查权限\nCheck Permission
+A -> Q : 转发请求\nForward Request
+activate Q
+Q -> Q : 检查配额\nCheck Quota
+Q -> K : 执行操作\nExecute Operation
+activate K
+K -> E : 调用 EtcdServer\nCall EtcdServer
+K -> K : 生成响应头\nGenerate Header
+K -> Q : 返回结果\nReturn Result
+deactivate K
+Q -> A : 返回结果\nReturn Result
+deactivate Q
+A -> G : 返回结果\nReturn Result
+deactivate A
+G -> C : Put Response
+deactivate G
+
+note right of authKVServer
+  认证装饰器
+  - 令牌验证
+  - 权限检查
+  - 用户识别
+  - 安全控制
+end note
+
+note right of quotaKVServer
+  配额装饰器
+  - 存储配额检查
+  - 请求大小限制
+  - 资源保护
+  - 告警机制
+end note
+
+note right of grpcGateway
+  HTTP 网关
+  - gRPC 到 HTTP 转换
+  - RESTful API 支持
+  - JSON 序列化
+  - 跨域支持
+end note
+
+note right of header
+  响应头管理
+  - 集群信息
+  - 版本信息
+  - Raft 状态
+  - 统一格式
+end note
+
+@enduml
